@@ -329,6 +329,7 @@ input {
 
 .update {
   position: absolute;
+  z-index: 8; /* above sheets and popovers, so an update is never hidden */
   left: 50%;
   bottom: calc(var(--safe-bottom) + 210px);
   transform: translateX(-50%);
