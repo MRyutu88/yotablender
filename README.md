@@ -2,6 +2,16 @@
 
 A touch-first low-poly character modeler for phones (an installable PWA) with a Blender round-trip.
 
+**Live app: https://mryutu88.github.io/yotablender/**
+
+## Install on the phone (works offline)
+
+1. Open the link above in Chrome on the phone.
+2. Menu ⋮ → **Add to Home screen** → **Install** (or use **Install app** in the app's ☰ menu).
+3. Open it once while online; a "Ready to work offline" message confirms the offline copy.
+   After that it runs with no connection. Projects are saved on the phone automatically.
+4. Every push to `main` deploys a new version; the app shows **Reload** when one is ready.
+
 ## Develop
 
 ```
