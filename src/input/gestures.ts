@@ -32,8 +32,8 @@ export interface GestureHandler {
   mouseOrbit(dx: number, dy: number): void;
   mousePan(dx: number, dy: number): void;
   wheel(deltaY: number, p: Pt): void;
-  /** Any gesture began (used to dismiss transient UI). */
-  touchDown?(p: Pt): void;
+  /** A gesture began. Return true to consume it (it only dismissed transient UI). */
+  touchDown?(p: Pt): boolean;
 }
 
 const SLOP = 9; // CSS px before a touch counts as a drag
@@ -101,7 +101,11 @@ export class GestureRecognizer {
     this.pts.set(e.pointerId, { id: e.pointerId, x: p.x, y: p.y, sx: p.x, sy: p.y });
     const n = this.pts.size;
     if (n === 1) {
-      this.h.touchDown?.(p);
+      if (this.h.touchDown?.(p)) {
+        // The touch only dismissed something (e.g. an open panel): ignore the rest of it.
+        this.state = 'drain';
+        return;
+      }
       this.state = 'pending';
       this.primary = e.pointerId;
       clearTimeout(this.holdTimer);

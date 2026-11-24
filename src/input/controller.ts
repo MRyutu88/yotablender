@@ -21,8 +21,14 @@ export class InputController implements GestureHandler {
 
   constructor(private app: App) {}
 
-  touchDown(): void {
-    if (S.sheet.value && window.matchMedia('(orientation: portrait)').matches) S.sheet.value = null;
+  touchDown(): boolean {
+    // In portrait an open panel covers part of the view: the first touch on the model closes it
+    // and does nothing else (so it can't deselect by accident).
+    if (S.sheet.value && window.matchMedia('(orientation: portrait)').matches) {
+      S.sheet.value = null;
+      return true;
+    }
+    return false;
   }
 
   wantsHold(): boolean {
