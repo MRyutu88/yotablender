@@ -19,16 +19,24 @@ export interface MeshData {
   positions: number[];
   faces: Face[];
   looseEdges: Edge[];
+  /** Material slot per face (index into the object's material slots). Absent = all slot 0. */
+  faceMats?: number[];
+  /** Color attribute, RGBA per vertex (Blender's default "Color", Vertex domain). Linear 0..1. */
+  colors?: number[];
 }
 
 export class Mesh implements MeshData {
   positions: number[];
   faces: Face[];
   looseEdges: Edge[];
+  faceMats?: number[];
+  colors?: number[];
   /** Bumped whenever faces/edges/vertex count change. Caches (topology, subdivision plans) key on it. */
   topoVersion = 0;
   /** Bumped whenever any vertex position changes. */
   posVersion = 0;
+  /** Bumped whenever the color attribute changes (painting). */
+  colorVersion = 0;
   private _topo: Topology | null = null;
   private _topoFor = -1;
 
@@ -36,6 +44,8 @@ export class Mesh implements MeshData {
     this.positions = data.positions;
     this.faces = data.faces;
     this.looseEdges = data.looseEdges;
+    this.faceMats = data.faceMats;
+    this.colors = data.colors;
   }
 
   get vertCount(): number {
@@ -55,8 +65,16 @@ export class Mesh implements MeshData {
     this.positions = data.positions;
     this.faces = data.faces;
     this.looseEdges = data.looseEdges;
+    this.faceMats = data.faceMats;
+    this.colors = data.colors;
     this.topoVersion++;
     this.posVersion++;
+    this.colorVersion++;
+  }
+
+  /** Call after editing `colors` in place. */
+  touchColors(): void {
+    this.colorVersion++;
   }
 
   /** Call after editing `positions` in place. */
@@ -84,11 +102,55 @@ export class Mesh implements MeshData {
 }
 
 export function cloneData(d: MeshData): MeshData {
-  return {
+  const out: MeshData = {
     positions: d.positions.slice(),
     faces: d.faces.map((f) => f.slice()),
     looseEdges: d.looseEdges.map((e) => [e[0], e[1]] as Edge),
   };
+  if (d.faceMats) out.faceMats = d.faceMats.slice();
+  if (d.colors) out.colors = d.colors.slice();
+  return out;
+}
+
+// --- Attribute helpers (keep faceMats/colors in step with faces/vertices) ----------------
+
+export const faceMat = (d: MeshData, f: number): number => d.faceMats?.[f] ?? 0;
+
+/** Appends a vertex; its color is copied from `colorOf` (a vertex) or given directly. */
+export function addVertex(d: MeshData, x: number, y: number, z: number, color?: number | number[]): number {
+  const i = d.positions.length / 3;
+  d.positions.push(x, y, z);
+  if (d.colors) {
+    if (typeof color === 'number') d.colors.push(d.colors[color * 4], d.colors[color * 4 + 1], d.colors[color * 4 + 2], d.colors[color * 4 + 3]);
+    else d.colors.push(...(color ?? [1, 1, 1, 1]));
+  }
+  return i;
+}
+
+/** Color between two vertices (for new vertices on an edge). */
+export function lerpColor(d: MeshData, a: number, b: number, t: number): number[] | undefined {
+  if (!d.colors) return undefined;
+  const c = d.colors;
+  return [0, 1, 2, 3].map((k) => c[a * 4 + k] + (c[b * 4 + k] - c[a * 4 + k]) * t);
+}
+
+/** Appends a face with the material of face `like` (or slot `like` when `isSlot`). */
+export function addFace(d: MeshData, face: Face, like: number, isSlot = false): void {
+  if (d.faceMats) d.faceMats.push(isSlot ? like : (d.faceMats[like] ?? 0));
+  d.faces.push(face);
+}
+
+/** Keeps only the faces for which keep(i) is true, with their materials. */
+export function filterFaces(d: MeshData, keep: (i: number) => boolean): void {
+  const faces: Face[] = [];
+  const mats: number[] = [];
+  d.faces.forEach((f, i) => {
+    if (!keep(i)) return;
+    faces.push(f);
+    if (d.faceMats) mats.push(d.faceMats[i] ?? 0);
+  });
+  d.faces = faces;
+  if (d.faceMats) d.faceMats = mats;
 }
 
 // --- Geometry helpers -------------------------------------------------------------------
@@ -179,14 +241,18 @@ export function compactVertices(
     remap[i] = next++;
     positions.push(data.positions[i * 3], data.positions[i * 3 + 1], data.positions[i * 3 + 2]);
   }
-  return {
-    data: {
-      positions,
-      faces: data.faces.map((f) => f.map((v) => remap[v])),
-      looseEdges: data.looseEdges.map(([a, b]) => [remap[a], remap[b]] as Edge),
-    },
-    remap,
+  const out: MeshData = {
+    positions,
+    faces: data.faces.map((f) => f.map((v) => remap[v])),
+    looseEdges: data.looseEdges.map(([a, b]) => [remap[a], remap[b]] as Edge),
   };
+  if (data.faceMats) out.faceMats = data.faceMats.slice();
+  if (data.colors) {
+    const colors: number[] = [];
+    for (let i = 0; i < n; i++) if (remap[i] >= 0) colors.push(data.colors[i * 4], data.colors[i * 4 + 1], data.colors[i * 4 + 2], data.colors[i * 4 + 3]);
+    out.colors = colors;
+  }
+  return { data: out, remap };
 }
 
 /** Vertices that no face or loose edge references (stray points, kept on purpose). */

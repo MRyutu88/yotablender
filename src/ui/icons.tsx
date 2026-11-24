@@ -76,5 +76,11 @@ export const Icon = {
   linked: (p?: P) => I([<circle cx="7" cy="7" r="3" />, <circle cx="17" cy="17" r="3" />, <path d="M9.5 9.5l5 5" />], p),
   loop: (p?: P) => I([<ellipse cx="12" cy="12" rx="9" ry="5" />, <path d="M3 12h2M19 12h2" />], p),
   ring: (p?: P) => I([<ellipse cx="12" cy="12" rx="9" ry="5" stroke-opacity=".4" />, <path d="M6 8.5v7M10 7.2v9.6M14 7.2v9.6M18 8.5v7" />], p),
+  palette: (p?: P) => I([<path d="M12 3a9 9 0 0 0 0 18c1.4 0 2-1 2-2 0-1.5-1.5-1.6-1.5-3 0-1 .8-1.8 1.8-1.8H17a4 4 0 0 0 4-4C21 6.4 17 3 12 3z" />, <circle cx="7.5" cy="11" r="1.2" fill="currentColor" />, <circle cx="10" cy="7" r="1.2" fill="currentColor" />, <circle cx="15" cy="7.5" r="1.2" fill="currentColor" />], p),
+  brush: (p?: P) => I([<path d="M14.5 4.5l5 5-8 8-5-5z" />, <path d="M6.5 12.5C4 13 3 15 3 21c4.5 0 7-1.5 8-4" />], p),
+  blur: (p?: P) => I([<circle cx="12" cy="12" r="8" stroke-dasharray="2 2.4" />, <circle cx="12" cy="12" r="3.5" fill="currentColor" fill-opacity=".35" />], p),
+  dropper: (p?: P) => I([<path d="M14 6l4 4M17 3.5a2.1 2.1 0 0 1 3 3L9 17.5 5 19l1.5-4z" />], p),
+  fill: (p?: P) => I([<path d="M4 12 11 5l7 7-7 7z" />, <path d="M19.5 16.5c0 1.1-.7 2-1.5 2s-1.5-.9-1.5-2 1.5-3 1.5-3 1.5 1.9 1.5 3z" fill="currentColor" />], p),
+  shade: (p?: P) => I([<circle cx="12" cy="12" r="8.5" />, <path d="M12 3.5a8.5 8.5 0 0 1 0 17" fill="currentColor" fill-opacity=".35" stroke="none" />, <circle cx="9" cy="9" r="1.6" fill="currentColor" />], p),
   dots: (p?: P) => I([<circle cx="5" cy="12" r="1" />, <circle cx="12" cy="12" r="1" />, <circle cx="19" cy="12" r="1" />], p),
 };

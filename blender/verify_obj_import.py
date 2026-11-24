@@ -7,7 +7,7 @@ Checks, per object: name, vertex count, face count, and the histogram of face si
 (3 = triangles, 4 = quads, 8 = the cylinder's n-gon caps…), plus one vertex position to
 confirm the Z-up/Y-up conversion and baked transforms.
 """
-import bpy, json, os
+import bpy, json, os, re
 from collections import Counter
 
 REPO = globals().get("YB_REPO") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -22,12 +22,20 @@ def import_and_count(path):
     for o in new:
         me = o.data
         sizes = Counter(len(p.vertices) for p in me.polygons)
+        # Per-face material names; Blender may suffix names that already exist (".001").
+        mats = Counter(re.sub(r"\.\d{3}$", "", me.materials[p.material_index].name) if me.materials else "" for p in me.polygons)
+        colors = None
+        if me.color_attributes:
+            ca = me.color_attributes[0]
+            colors = {"name": ca.name, "domain": ca.domain, "type": ca.data_type,
+                      "first": [round(c, 4) for c in ca.data[0].color][:3]}
         out[o.name] = {
             "verts": len(me.vertices),
             "faces": len(me.polygons),
             "sizes": {str(k): v for k, v in sorted(sizes.items())},
+            "materials": dict(mats),
+            "colors": colors,
             "first_vertex_world": [round(c, 5) for c in (o.matrix_world @ me.vertices[0].co)],
-            "materials": [m.name for m in me.materials if m],
         }
     return out, new
 
@@ -45,7 +53,14 @@ def run():
                 checks = []
                 for exp in expected[key]:
                     g = got.get(exp["name"])
-                    ok = bool(g) and g["verts"] == exp["verts"] and g["faces"] == exp["faces"] and g["sizes"] == exp["sizes"]
+                    ok = (
+                        bool(g)
+                        and g["verts"] == exp["verts"]
+                        and g["faces"] == exp["faces"]
+                        and g["sizes"] == exp["sizes"]
+                        and g["materials"] == exp.get("materials", g["materials"])
+                        and bool(g["colors"]) == exp.get("hasColors", bool(g["colors"]))
+                    )
                     report["ok"] &= ok
                     checks.append({"name": exp["name"], "ok": ok, "expected": exp, "got": g})
                 report["files"][fname] = checks

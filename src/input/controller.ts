@@ -35,7 +35,10 @@ export class InputController implements GestureHandler {
     return false;
   }
 
+  private painting = false;
+
   wantsHold(): boolean {
+    if (S.mode.value === 'paint') return false;
     return S.mode.value === 'edit' && !S.isTransformTool.value && S.tool.value === 'select';
   }
 
@@ -44,6 +47,11 @@ export class InputController implements GestureHandler {
   }
 
   tap(p: Pt): void {
+    if (S.mode.value === 'paint') {
+      this.app.paintStart(p.x, p.y);
+      this.app.paintEnd();
+      return;
+    }
     this.app.tap(p.x, p.y);
   }
 
@@ -59,6 +67,12 @@ export class InputController implements GestureHandler {
 
   dragStart(start: Pt, p: Pt): void {
     this.last = { ...start };
+    if (S.mode.value === 'paint') {
+      this.painting = true;
+      this.app.paintStart(start.x, start.y);
+      this.app.paintMove(p.x, p.y);
+      return;
+    }
     const t = S.tool.value;
     if (t === 'move' || t === 'rotate' || t === 'scale') {
       const hit = this.app.gizmoHit(start.x, start.y);
@@ -78,6 +92,10 @@ export class InputController implements GestureHandler {
   }
 
   dragMove(p: Pt, precision: boolean): void {
+    if (this.painting) {
+      this.app.paintMove(p.x, p.y);
+      return;
+    }
     if (this.drag === 'orbit') {
       this.app.vp.cam.orbit(p.x - this.last.x, p.y - this.last.y);
       this.app.vp.requestRender();
@@ -90,6 +108,11 @@ export class InputController implements GestureHandler {
   }
 
   dragEnd(_p: Pt, cancelled: boolean): void {
+    if (this.painting) {
+      this.painting = false;
+      this.app.paintEnd();
+      return;
+    }
     if (this.drag === 'transform') this.app.endTransform(cancelled);
     else if (this.drag === 'marquee') {
       const m = S.marquee.value;

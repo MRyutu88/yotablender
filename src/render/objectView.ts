@@ -22,12 +22,22 @@ export interface CageState {
   hover: { kind: SelectMode; index: number } | null;
 }
 
+export interface SlotLook {
+  color: [number, number, number, number];
+  roughness: number;
+  metallic: number;
+}
+export type Shading = 'solid' | 'material';
+
 export class ObjectView {
   readonly group = new THREE.Group();
   readonly surface: THREE.Mesh;
   private outline: THREE.Mesh;
-  private surfMat: THREE.MeshMatcapMaterial;
+  private mats: THREE.Material[] = [];
+  private matKey = '';
+  private xray = false;
   private topoKey = -1;
+  private colorKey = -1;
 
   // Cage overlay (edit mode)
   private cage = new THREE.Group();
@@ -45,10 +55,12 @@ export class ObjectView {
   private edgeKeys: number[] = [];
   private cagePos = new Float32Array(0);
 
-  constructor(matcap: THREE.Texture, private pointMat: THREE.ShaderMaterial) {
+  constructor(
+    private matcap: THREE.Texture,
+    private pointMat: THREE.ShaderMaterial,
+  ) {
     this.group.matrixAutoUpdate = false;
-    this.surfMat = new THREE.MeshMatcapMaterial({ matcap, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
-    this.surface = new THREE.Mesh(new THREE.BufferGeometry(), this.surfMat);
+    this.surface = new THREE.Mesh(new THREE.BufferGeometry(), []);
     this.surface.frustumCulled = false;
     this.outline = new THREE.Mesh(this.surface.geometry, makeOutlineMaterial(COLORS.selected, 1.6));
     this.outline.frustumCulled = false;
@@ -82,8 +94,8 @@ export class ObjectView {
     (this.outline.material as THREE.ShaderMaterial).uniforms.resolution.value.set(w, h);
   }
 
-  /** Updates the evaluated surface. */
-  updateSurface(obj: SceneObject, ev: EvalResult, color: [number, number, number, number]): void {
+  /** Updates the evaluated surface: geometry, material groups per slot, vertex colors. */
+  updateSurface(obj: SceneObject, ev: EvalResult, slots: SlotLook[], shading: Shading): void {
     this.group.matrix.fromArray(Array.from(objMatrix(obj)));
     this.group.matrixWorldNeedsUpdate = true;
     this.group.visible = obj.visible;
@@ -93,18 +105,48 @@ export class ObjectView {
       const ng = new THREE.BufferGeometry();
       ng.setAttribute('position', new THREE.BufferAttribute(ev.positions, 3).setUsage(THREE.DynamicDrawUsage));
       ng.setAttribute('normal', new THREE.BufferAttribute(ev.normals, 3).setUsage(THREE.DynamicDrawUsage));
+      if (ev.colors) ng.setAttribute('color', new THREE.BufferAttribute(ev.colors, 3).setUsage(THREE.DynamicDrawUsage));
       ng.setIndex(new THREE.BufferAttribute(ev.tris, 1));
+      for (const gr of ev.groups) ng.addGroup(gr.start, gr.count, gr.slot);
       this.surface.geometry = ng;
       this.outline.geometry = ng;
       this.topoKey = ev.topoKey;
+      this.colorKey = ev.colorKey;
     } else {
       g.attributes.position.needsUpdate = true;
       g.attributes.normal.needsUpdate = true;
+      if (ev.colors && ev.colorKey !== this.colorKey) {
+        g.attributes.color.needsUpdate = true;
+        this.colorKey = ev.colorKey;
+      }
     }
-    this.surfMat.color.setRGB(color[0], color[1], color[2], THREE.LinearSRGBColorSpace);
-    if (this.surfMat.flatShading !== !obj.shade_smooth) {
-      this.surfMat.flatShading = !obj.shade_smooth;
-      this.surfMat.needsUpdate = true;
+
+    // Materials: one per slot. With a color attribute the attribute is shown (like Blender's
+    // Vertex Paint view); otherwise each slot's base color.
+    const hasColors = !!ev.colors;
+    const maxSlot = Math.max(0, ...ev.groups.map((gr) => gr.slot));
+    const looks = Array.from({ length: maxSlot + 1 }, (_, i) => slots[i] ?? slots[0] ?? { color: [0.8, 0.8, 0.8, 1], roughness: 0.5, metallic: 0 });
+    const key = JSON.stringify([shading, obj.shade_smooth, hasColors, this.xray, looks]);
+    if (key !== this.matKey) {
+      this.matKey = key;
+      for (const m of this.mats) m.dispose();
+      this.mats = looks.map((l) => {
+        const common = {
+          color: hasColors ? new THREE.Color(1, 1, 1) : new THREE.Color().setRGB(l.color[0], l.color[1], l.color[2], THREE.LinearSRGBColorSpace),
+          vertexColors: hasColors,
+          flatShading: !obj.shade_smooth,
+          polygonOffset: true,
+          polygonOffsetFactor: 1,
+          polygonOffsetUnits: 1,
+          transparent: this.xray,
+          opacity: this.xray ? 0.45 : 1,
+          depthWrite: !this.xray,
+        };
+        return shading === 'material'
+          ? new THREE.MeshStandardMaterial({ ...common, roughness: l.roughness, metalness: l.metallic })
+          : new THREE.MeshMatcapMaterial({ ...common, matcap: this.matcap });
+      });
+      this.surface.material = this.mats;
     }
   }
 
@@ -115,12 +157,10 @@ export class ObjectView {
   }
 
   setXray(on: boolean): void {
-    this.surfMat.transparent = on;
-    this.surfMat.opacity = on ? 0.45 : 1;
-    this.surfMat.depthWrite = !on;
+    this.xray = on;
+    this.matKey = ''; // rebuilt with transparency on the next surface update
     for (const m of [this.edgeMat, this.faceTint.material as THREE.Material]) m.depthTest = !on;
     this.pointMat.depthTest = !on;
-    this.surfMat.needsUpdate = true;
   }
 
   /** Shows/hides and refreshes the edit-mode cage. */
@@ -259,7 +299,7 @@ export class ObjectView {
 
   dispose(): void {
     this.surface.geometry.dispose();
-    this.surfMat.dispose();
+    for (const m of this.mats) m.dispose();
     (this.outline.material as THREE.Material).dispose();
     this.edgeGeom.dispose();
     this.edgeMat.dispose();

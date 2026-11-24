@@ -21,6 +21,9 @@ export function validateMesh(mesh: MeshData): ValidationResult {
     }
   }
 
+  if (mesh.faceMats && mesh.faceMats.length !== mesh.faces.length) errors.push('face materials are out of step with faces');
+  if (mesh.colors && mesh.colors.length !== (mesh.positions.length / 3) * 4) errors.push('colors are out of step with vertices');
+
   // Duplicate faces (same vertex set) are degenerate even when their winding is opposite.
   const faceSets = new Set<string>();
   mesh.faces.forEach((f, i) => {

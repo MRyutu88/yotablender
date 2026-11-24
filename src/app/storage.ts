@@ -2,14 +2,14 @@
 
 import { openDB, type IDBPDatabase } from 'idb';
 import type { Project } from '../core/scene/scene';
-import { deserializeProject, serializeProject, type ProjectFileV1 } from '../core/io/projectJson';
+import { deserializeProject, serializeProject, type ProjectFileV2 } from '../core/io/projectJson';
 
 interface StoredProject {
   id: string;
   name: string;
   modified: number;
   objects: number;
-  data: ProjectFileV1;
+  data: ProjectFileV2;
 }
 
 let dbp: Promise<IDBPDatabase> | null = null;

@@ -61,4 +61,5 @@ if (import.meta.env.PROD) {
 }
 
 // Debug handle for development in desktop Chrome.
-(window as unknown as { yb: App }).yb = app;
+(window as unknown as { yb: App; ybState: typeof S }).yb = app;
+(window as unknown as { ybState: typeof S }).ybState = S;

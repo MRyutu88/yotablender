@@ -346,6 +346,9 @@ export function HelpSheet() {
     ['Gizmo handles', 'Drag an arrow, ring or square to constrain'],
     ['Nav ball (top right)', 'Drag to orbit · tap an axis for that view'],
     ['Tap a tool again', 'Back to the Select tool'],
+    ['Double-tap an edge', 'Select its edge loop (a vertex or face: the whole piece)'],
+    ['◎ chip (Edit Mode)', 'Proportional editing: nearby vertices follow; set the falloff with the slider'],
+    ['Brush mode (top bar)', 'Vertex Paint: drag to paint, Blur to soften, Pick to sample a color'],
   ];
   return (
     <Sheet title="Gestures">

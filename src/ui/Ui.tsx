@@ -5,6 +5,8 @@ import * as S from '../app/state';
 import { Icon } from './icons';
 import { IconButton, Segmented, Stepper } from './widgets';
 import { AddSheet, HelpSheet, ItemSheet, MenuSheet, ModifiersSheet, OutlinerSheet } from './sheets';
+import { MaterialsSheet } from './materials';
+import { hexToLinear, linearToHex, SWATCHES } from './color';
 import { PRIMITIVE_PARAM_SPECS, type PrimitiveType } from '../core/primitives/primitives';
 import type { ViewName } from '../render/camera';
 
@@ -24,9 +26,11 @@ export function Ui({ app, installPrompt }: { app: App; installPrompt: (() => voi
       {sheet === 'item' && <ItemSheet app={app} />}
       {sheet === 'menu' && <MenuSheet app={app} installPrompt={installPrompt} />}
       {sheet === 'help' && <HelpSheet />}
+      {sheet === 'materials' && <MaterialsSheet app={app} />}
       <SelectPopover app={app} />
       <Marquee />
       <PropCircle />
+      <BrushCursor />
       <Loupe app={app} />
       <Hud />
       <Toasts />
@@ -37,8 +41,8 @@ export function Ui({ app, installPrompt }: { app: App; installPrompt: (() => voi
 
 function TopBar({ app }: { app: App }) {
   const edit = S.mode.value === 'edit';
-  // One control for both: Object Mode, or Edit Mode in vertex / edge / face select mode.
-  const value = edit ? S.selectMode.value : 'object';
+  // One control for every mode: Object, Edit (vertex / edge / face) and Vertex Paint.
+  const value = edit ? S.selectMode.value : S.mode.value === 'paint' ? 'paint' : 'object';
   return (
     <header class="topbar">
       <IconButton icon={Icon.menu()} title="Menu" onClick={() => toggleSheet('menu')} active={S.sheet.value === 'menu'} />
@@ -46,15 +50,16 @@ function TopBar({ app }: { app: App }) {
         class="modeswitch"
         value={value}
         onChange={(v) => {
-          if (v === 'object') return app.setMode('object');
+          if (v === 'object' || v === 'paint') return app.setMode(v);
           app.setSelectMode(v);
           app.setMode('edit');
         }}
         options={[
-          { value: 'object', label: 'Object', title: 'Object Mode' },
+          { value: 'object', icon: Icon.cube(), title: 'Object Mode' },
           { value: 'vert', icon: Icon.vert(), title: 'Edit Mode: vertices' },
           { value: 'edge', icon: Icon.edge(), title: 'Edit Mode: edges' },
           { value: 'face', icon: Icon.face(), title: 'Edit Mode: faces' },
+          { value: 'paint', icon: Icon.brush(), title: 'Vertex Paint' },
         ]}
       />
       <div class="spacer" />
@@ -258,7 +263,62 @@ function NavBall({ app }: { app: App }) {
   );
 }
 
+/** Vertex Paint: brush size/strength, colors, and the paint tools. */
+function PaintBars({ app }: { app: App }) {
+  const [r, g, b] = S.brushColor.value;
+  const hex = linearToHex([r, g, b]);
+  const setHex = (h: string, remember: boolean) => {
+    S.brushColor.value = hexToLinear(h);
+    if (remember) S.recentColors.value = [h, ...S.recentColors.value.filter((x) => x !== h)].slice(0, 6);
+  };
+  const t = S.paintTool.value;
+  const swatches = [...S.recentColors.value, ...SWATCHES.filter((s) => !S.recentColors.value.includes(s))].slice(0, 10);
+  return (
+    <div class="bottom">
+      <div class="paintbar">
+        <label class="slider">
+          <span class="field-label">Size</span>
+          <input type="range" min={6} max={160} step={1} value={S.brushRadius.value} onInput={(e) => (S.brushRadius.value = Number((e.target as HTMLInputElement).value))} />
+          <b>{S.brushRadius.value}</b>
+        </label>
+        <label class="slider">
+          <span class="field-label">Strength</span>
+          <input type="range" min={0.02} max={1} step={0.01} value={S.brushStrength.value} onInput={(e) => (S.brushStrength.value = Number((e.target as HTMLInputElement).value))} />
+          <b>{S.brushStrength.value.toFixed(2)}</b>
+        </label>
+      </div>
+      <nav class="actions colors" aria-label="Colors">
+        <label class="brushcolor" aria-label="Brush color">
+          <input type="color" value={hex} onInput={(e) => setHex((e.target as HTMLInputElement).value, false)} onChange={(e) => setHex((e.target as HTMLInputElement).value, true)} />
+          <span class="swatch big" style={{ background: hex }} />
+        </label>
+        {swatches.map((h) => (
+          <button key={h} class={`swatch big ${h === hex ? 'on' : ''}`} aria-label={`Paint with ${h}`} style={{ background: h }} onClick={() => setHex(h, true)} />
+        ))}
+        <IconButton icon={Icon.fill()} label="Fill" onClick={() => app.fillColor()} />
+        <IconButton icon={Icon.palette()} label="Material" active={S.sheet.value === 'materials'} onClick={() => toggleSheet('materials')} />
+      </nav>
+      <nav class="tools" aria-label="Paint tools">
+        <IconButton icon={Icon.brush()} label="Draw" active={t === 'draw'} onClick={() => (S.paintTool.value = 'draw')} />
+        <IconButton icon={Icon.blur()} label="Blur" active={t === 'blur'} onClick={() => (S.paintTool.value = 'blur')} />
+        <IconButton icon={Icon.dropper()} label="Pick" active={t === 'pick'} onClick={() => (S.paintTool.value = 'pick')} />
+      </nav>
+    </div>
+  );
+}
+
+function BrushCursor() {
+  const c = S.brushCursor.value;
+  if (!c) return null;
+  return (
+    <svg class="propcircle brush" width="100%" height="100%">
+      <circle cx={c.x} cy={c.y} r={c.r} />
+    </svg>
+  );
+}
+
 function BottomBars({ app }: { app: App }) {
+  if (S.mode.value === 'paint') return <PaintBars app={app} />;
   const edit = S.mode.value === 'edit';
   const t = S.tool.value;
   const isT = S.isTransformTool.value;
@@ -356,6 +416,7 @@ function BottomBars({ app }: { app: App }) {
             <IconButton icon={Icon.merge()} label="Merge" onClick={() => app.mergeCenter()} />
             <IconButton icon={Icon.mergeDist()} label="By dist." onClick={() => app.mergeDistance()} />
             <IconButton icon={Icon.trash()} label="Delete" onClick={() => app.deleteElements()} />
+            <IconButton icon={Icon.palette()} label="Material" active={S.sheet.value === 'materials'} onClick={() => toggleSheet('materials')} />
             <IconButton icon={Icon.wrench()} label="Modifiers" active={S.sheet.value === 'modifiers'} onClick={() => toggleSheet('modifiers')} />
             <IconButton icon={Icon.sliders()} label="Item" active={S.sheet.value === 'item'} onClick={() => toggleSheet('item')} />
           </>
@@ -363,6 +424,7 @@ function BottomBars({ app }: { app: App }) {
           <>
             <IconButton icon={Icon.plus()} label="Add" active={S.sheet.value === 'add'} onClick={() => toggleSheet('add')} />
             <IconButton icon={Icon.wrench()} label="Modifiers" active={S.sheet.value === 'modifiers'} onClick={() => toggleSheet('modifiers')} />
+            <IconButton icon={Icon.palette()} label="Material" active={S.sheet.value === 'materials'} onClick={() => toggleSheet('materials')} />
             <IconButton icon={Icon.list()} label="Objects" active={S.sheet.value === 'outliner'} onClick={() => toggleSheet('outliner')} />
             <IconButton icon={Icon.duplicate()} label="Duplicate" onClick={() => app.duplicateSelected()} />
             <IconButton icon={Icon.trash()} label="Delete" onClick={() => app.deleteSelectedObjects()} />

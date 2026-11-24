@@ -70,9 +70,54 @@ describe('project JSON', () => {
     expect(back.objects[0].mesh.faces).toEqual(p.objects[0].mesh.faces);
     expect(back.objects[0].location).toEqual([1, 2, 3]);
     expect(back.objects[0].modifiers).toEqual(p.objects[0].modifiers);
-    expect(back.objects[0].materialId).toBe(p.objects[0].materialId);
+    expect(back.objects[0].materialSlots).toEqual(p.objects[0].materialSlots);
     const file = serializeProject(p);
     expect(file.objects[0].modifiers[0]).toMatchObject({ type: 'MIRROR', use_axis: [true, false, false], use_clip: true });
+  });
+
+  it('round-trips material slots, face materials and colors (v2)', () => {
+    const p = sampleProject();
+    const o = p.objects[0];
+    p.materials.push({ id: 'm2', name: 'Skin', base_color: [0.9, 0.6, 0.5, 1], roughness: 0.6, metallic: 0 });
+    o.materialSlots = [...o.materialSlots, 'm2'];
+    o.mesh.setData({ ...o.mesh.snapshot(), faceMats: o.mesh.faces.map((_, i) => i % 2), colors: new Array(o.mesh.vertCount * 4).fill(0.25) });
+    const back = deserializeProject(JSON.parse(JSON.stringify(serializeProject(p))));
+    const b = back.objects[0];
+    expect(b.materialSlots.map((id) => back.materials.find((m) => m.id === id)!.name)).toEqual(['Material', 'Skin']);
+    expect(b.mesh.faceMats).toEqual(o.mesh.faceMats);
+    expect(b.mesh.colors).toEqual(o.mesh.colors);
+  });
+
+  it('migrates version 1 files (one material per object)', () => {
+    const v1 = {
+      format: 'yotablender',
+      version: 1,
+      generator: 'YotaBlender 0.1',
+      unit: 'm',
+      up_axis: 'Z',
+      project: { id: 'p1', name: 'Old', created: 0, modified: 0 },
+      materials: [{ id: 'mat-default', name: 'Material', base_color: [0.8, 0.8, 0.8, 1], roughness: 0.5, metallic: 0 }],
+      objects: [
+        {
+          id: 'o1',
+          name: 'Cube',
+          location: [0, 0, 0],
+          rotation_mode: 'XYZ',
+          rotation_euler: [0, 0, 0],
+          scale: [1, 1, 1],
+          visible: true,
+          shade_smooth: false,
+          material: 'Material',
+          mesh: { vertices: [[0, 0, 0], [1, 0, 0], [0, 1, 0]], faces: [[0, 1, 2]], loose_edges: [] },
+          modifiers: [],
+        },
+      ],
+    };
+    const p = deserializeProject(v1);
+    expect(p.objects[0].materialSlots).toEqual(['mat-default']);
+    expect(p.objects[0].mesh.faceMats).toBeUndefined();
+    expect(p.objects[0].mesh.colors).toBeUndefined();
+    expect(serializeProject(p).version).toBe(2);
   });
 
   it('rejects files from other apps and newer versions', () => {

@@ -239,11 +239,8 @@ input {
   flex: 1;
 }
 .modeswitch .seg {
-  padding: 0 4px;
-  min-width: 46px;
-}
-.modeswitch .seg:first-child {
-  padding: 0 12px;
+  padding: 0 2px;
+  min-width: 42px;
 }
 .topbar {
   gap: 4px;
@@ -879,6 +876,141 @@ input {
 .help dd {
   margin: 0;
   color: var(--muted);
+}
+
+/* --- Materials ------------------------------------------------------------------------- */
+
+.slots {
+  list-style: none;
+  margin: 0 0 4px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.slot {
+  width: 100%;
+  min-height: 50px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  border-radius: 12px;
+  background: var(--panel-2);
+  text-align: left;
+}
+.slot.active {
+  outline: 2px solid var(--accent);
+}
+.slot-name {
+  flex: 1;
+}
+.slot small {
+  color: var(--muted);
+}
+.swatch {
+  display: inline-block;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  flex-shrink: 0;
+}
+.swatch.big {
+  width: 40px;
+  height: 40px;
+}
+.swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 6px 0 10px;
+}
+.colorpick {
+  width: 72px;
+  height: 44px;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  padding: 0;
+}
+.slider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+}
+.slider input {
+  flex: 1;
+  accent-color: var(--accent);
+  height: 32px;
+}
+.slider b {
+  min-width: 40px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Vertex Paint ------------------------------------------------------------------------ */
+
+.paintbar {
+  display: flex;
+  flex-direction: column;
+  padding: 0 12px;
+  border-radius: var(--radius);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  backdrop-filter: blur(8px);
+}
+.paintbar .slider {
+  min-height: 42px;
+}
+.paintbar .field-label {
+  min-width: 64px;
+}
+.actions.colors {
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+}
+.actions.colors .swatch.big {
+  flex: 0 0 auto;
+  width: 42px;
+  height: 42px;
+}
+.actions.colors .swatch.on {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+.brushcolor {
+  position: relative;
+  flex: 0 0 auto;
+}
+.brushcolor input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+}
+.brushcolor .swatch.big {
+  width: 52px;
+  height: 52px;
+  border-width: 3px;
+  border-color: #fff;
+}
+.propcircle.brush circle {
+  stroke-dasharray: none;
+  stroke: rgba(255, 255, 255, 0.9);
+  fill: none;
+}
+@media (orientation: landscape) and (max-height: 560px) {
+  .paintbar {
+    position: absolute;
+    left: calc(var(--safe-left) + 90px);
+    bottom: calc(var(--safe-bottom) + 8px);
+    width: min(360px, 45vw);
+  }
 }
 
 /* --- Popover (Select menu) ---------------------------------------------------------------- */

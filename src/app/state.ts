@@ -6,11 +6,11 @@ import type { SelectMode } from '../core/mesh/selection';
 import type { Vec3 } from '../core/math/vec3';
 import type { PrimitiveType } from '../core/primitives/primitives';
 
-export type Mode = 'object' | 'edit';
+export type Mode = 'object' | 'edit' | 'paint';
 export type ToolId = 'select' | 'box' | 'lasso' | 'move' | 'rotate' | 'scale';
 export type PickOp = 'replace' | 'add' | 'sub';
 export const popover = signal<null | 'select'>(null);
-export type SheetId = null | 'add' | 'outliner' | 'modifiers' | 'menu' | 'item' | 'projects' | 'help' | 'export';
+export type SheetId = null | 'add' | 'outliner' | 'modifiers' | 'menu' | 'item' | 'projects' | 'help' | 'export' | 'materials';
 
 /** Axis constraint for transforms: one axis, a plane (all but one axis), or a custom direction. */
 export type Constraint =
@@ -64,6 +64,21 @@ export const loupe = signal<{ x: number; y: number } | null>(null);
 export const precision = signal(false);
 /** Proportional editing (Edit Mode transforms): on/off and falloff radius in meters. */
 export const propEnabled = signal(false);
+/** Viewport shading: Solid (matcap, like Blender's Solid mode) or Material (lit, roughness/metallic). */
+export const shading = signal<'solid' | 'material'>('solid');
+/** Material slot being edited in the Materials sheet. */
+export const activeSlot = signal(0);
+
+// Vertex Paint
+export type PaintTool = 'draw' | 'blur' | 'pick';
+export const paintTool = signal<PaintTool>('draw');
+/** Brush color, linear RGB. */
+export const brushColor = signal<[number, number, number]>([0.88, 0.58, 0.39]);
+/** Brush radius in CSS px (screen space, like Blender's default). */
+export const brushRadius = signal(36);
+export const brushStrength = signal(0.6);
+export const recentColors = signal<string[]>([]);
+export const brushCursor = signal<{ x: number; y: number; r: number } | null>(null);
 export const propRadius = signal(0.5);
 /** Falloff circle shown while dragging with proportional editing (CSS px). */
 export const propCircle = signal<{ x: number; y: number; r: number } | null>(null);

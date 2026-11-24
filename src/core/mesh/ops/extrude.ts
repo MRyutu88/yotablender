@@ -5,7 +5,7 @@
 // - selected vertices not part of a selected edge: each gets a new wire edge.
 // The new geometry starts at the same place; the caller then moves it (along `normal` for faces).
 
-import { cloneData, edgeFromKey, edgeKey, faceNormalRaw, unreferencedVertices, compactVertices, type Edge, type MeshData } from '../mesh';
+import { addFace, addVertex, cloneData, edgeFromKey, edgeKey, faceNormalRaw, unreferencedVertices, compactVertices, type Edge, type MeshData } from '../mesh';
 import { emptySelection, flushSelection, type Selection } from '../selection';
 import { checkResult, OpError, type OpResult } from './opResult';
 
@@ -20,8 +20,7 @@ export function extrude(mesh: MeshData, sel: Selection): OpResult {
   const duplicate = (v: number): number => {
     let d = dup.get(v);
     if (d === undefined) {
-      d = pos.length / 3;
-      pos.push(pos[v * 3], pos[v * 3 + 1], pos[v * 3 + 2]);
+      d = addVertex(data, pos[v * 3], pos[v * 3 + 1], pos[v * 3 + 2], v);
       dup.set(v, d);
     }
     return d;
@@ -55,7 +54,7 @@ export function extrude(mesh: MeshData, sel: Selection): OpResult {
         coveredEdges.add(edgeKey(a, b));
         if (!directed.has(`${b},${a}`)) {
           // Outline edge a→b: side wall a, b, b', a' (keeps winding consistent with the neighbours).
-          data.faces.push([a, b, duplicate(b), duplicate(a)]);
+          addFace(data, [a, b, duplicate(b), duplicate(a)], f);
         }
       }
     }
@@ -77,18 +76,24 @@ export function extrude(mesh: MeshData, sel: Selection): OpResult {
     // the surface. Wire edges are oriented along their chain so neighbouring quads agree.
     const oriented: Edge[] = [];
     const wire: Edge[] = [];
+    const matOf = new Map<string, number>(); // oriented edge → face whose material the new quad takes
     for (const k of lonelyEdges) {
       const [a, b] = edgeFromKey(k);
       const fab = faceDirected.has(`${a},${b}`), fba = faceDirected.has(`${b},${a}`);
       if (fab && fba) throw new OpError('Can only extrude edges on a border (or loose edges)');
-      if (fab) oriented.push([b, a]);
-      else if (fba) oriented.push([a, b]);
-      else wire.push([a, b]);
+      if (fab) {
+        oriented.push([b, a]);
+        matOf.set(`${b},${a}`, faceDirected.get(`${a},${b}`)!);
+      } else if (fba) {
+        oriented.push([a, b]);
+        matOf.set(`${a},${b}`, faceDirected.get(`${b},${a}`)!);
+      } else wire.push([a, b]);
     }
     oriented.push(...orientChains(wire));
     for (const [a, b] of oriented) {
       // [a, b, b', a'] runs a→b, opposite to the existing face's b→a.
-      data.faces.push([a, b, duplicate(b), duplicate(a)]);
+      const like = matOf.get(`${a},${b}`);
+      addFace(data, [a, b, duplicate(b), duplicate(a)], like ?? 0, like === undefined);
     }
     // A loose edge that now has a face is no longer loose.
     const used = new Set(lonelyEdges);

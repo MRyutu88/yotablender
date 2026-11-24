@@ -6,6 +6,7 @@ import { OrbitCamera } from './camera';
 import { ObjectView } from './objectView';
 import { Gizmo } from './gizmo';
 import { COLORS, makeMatcap, makePointMaterial } from './materials';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 export interface FrameStats {
   frameMs: number;
@@ -61,6 +62,22 @@ export class Viewport {
     });
     canvas.addEventListener('webglcontextlost', (e) => e.preventDefault());
     canvas.addEventListener('webglcontextrestored', () => this.requestRender());
+  }
+
+  private envReady = false;
+
+  /** Image-based lighting for the Material shading mode (built once, offline-safe). */
+  useEnvironment(on: boolean): void {
+    if (on && !this.envReady) {
+      const pmrem = new THREE.PMREMGenerator(this.renderer);
+      this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+      pmrem.dispose();
+      // The generator leaves its own clear color/auto-clear behind; restore ours.
+      this.renderer.setClearColor(COLORS.background, 1);
+      this.renderer.autoClear = false;
+      this.envReady = true;
+    }
+    this.scene.environmentIntensity = on ? 1 : 0;
   }
 
   resize(w: number, h: number): void {
@@ -134,6 +151,9 @@ export class Viewport {
    */
   readDepth(scale = 0.5): ((x: number, y: number) => number) | null {
     if (!this.floatDepthOk) return null;
+    // Make sure the scene reflects the latest data even if no frame has been drawn since the
+    // last change (picking can happen between frames).
+    this.onBeforeFrame?.();
     const w = Math.max(1, Math.floor(this.width * scale)), h = Math.max(1, Math.floor(this.height * scale));
     if (!this.depthTarget || this.depthTarget.width !== w || this.depthTarget.height !== h) {
       this.depthTarget?.dispose();

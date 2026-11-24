@@ -12,6 +12,20 @@ A touch-first low-poly character modeler for phones (an installable PWA) with a 
    After that it runs with no connection. Projects are saved on the phone automatically.
 4. Every push to `main` deploys a new version; the app shows **Reload** when one is ready.
 
+## What it does
+
+- **Object Mode:** primitives (cube, quad sphere, UV sphere, cylinder, cone, torus, plane) and a
+  "Character start" (half box with Mirror + Subdivision); move/rotate/scale, duplicate, outliner.
+- **Edit Mode** (vertex / edge / face): extrude, inset, loop cut, merge, delete; select
+  linked / loop / ring (double-tap an edge for its loop); proportional editing.
+- **Modifiers:** Mirror (axes, clipping, merge) → Subdivision Surface, matching Blender 5.3's results.
+- **Materials:** slots per object, per-face assignment, base color / roughness / metallic,
+  Solid or Material preview shading.
+- **Vertex Paint:** draw, blur and pick colors into a "Color" attribute (Vertex domain).
+- **Export:** OBJ + MTL (cage with quads/n-gons, per-face materials, vertex colors) and the
+  native `.yblend.json` project (modifiers, transforms, slots, colors) for the Blender add-on.
+- Undo/redo for everything, autosave on the device, works offline.
+
 ## Develop
 
 ```
@@ -29,7 +43,7 @@ or use the GitHub Pages build (`.github/workflows/deploy.yml` deploys on every p
 ## Blender
 
 - `blender/verify_obj_import.py` imports `blender/samples/*.obj` into Blender and checks that
-  every object and its face sizes survive. Regenerate the samples with
+  every object, its face sizes, per-face materials and vertex colors survive. Regenerate the samples with
   `WRITE_SAMPLES=1 npx vitest run samples`.
 - `blender/make_subdiv_fixtures.py` regenerates the subdivision golden data used by the tests.
 - Import our OBJ in Blender with File → Import → Wavefront (.obj), default settings.

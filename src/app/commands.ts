@@ -50,6 +50,8 @@ export interface ChangeOptions {
   ids: string[] | 'all';
   /** Snapshot meshes too (off for pure transform/rename changes). */
   meshes?: boolean;
+  /** Snapshot the project's material list too. */
+  materials?: boolean;
 }
 
 /** Starts recording: snapshots now, `finish` snapshots again and returns the undo command. */
@@ -60,21 +62,35 @@ export function beginRecord(host: SceneHost, opts: ChangeOptions): { finish(labe
   const beforeOrder = host.project.objects.map((o) => o.id);
   const before = new Map(pick().map((o) => [o.id, snap(o, withMesh)]));
   const beforeUi = host.getUiSel();
+  const beforeMats = opts.materials ? structuredClone(host.project.materials) : null;
+  const putMats = (m: typeof beforeMats) => {
+    if (m) host.project.materials = structuredClone(m);
+  };
   return {
-    abort: () => restore(host, beforeOrder, before, beforeUi),
+    abort: () => {
+      putMats(beforeMats);
+      restore(host, beforeOrder, before, beforeUi);
+    },
     finish: (label: string) => {
       const afterOrder = host.project.objects.map((o) => o.id);
       const touched = new Set([...before.keys(), ...afterOrder.filter((id) => !beforeOrder.includes(id))]);
       const after = new Map(host.project.objects.filter((o) => touched.has(o.id)).map((o) => [o.id, snap(o, withMesh)]));
       const afterUi = host.getUiSel();
+      const afterMats = opts.materials ? structuredClone(host.project.materials) : null;
       let bytes = 512;
       for (const s of before.values()) bytes += snapBytes(s);
       for (const s of after.values()) bytes += snapBytes(s);
       return {
         label,
         bytes,
-        undo: () => restore(host, beforeOrder, before, beforeUi),
-        redo: () => restore(host, afterOrder, after, afterUi),
+        undo: () => {
+          putMats(beforeMats);
+          restore(host, beforeOrder, before, beforeUi);
+        },
+        redo: () => {
+          putMats(afterMats);
+          restore(host, afterOrder, after, afterUi);
+        },
       };
     },
   };

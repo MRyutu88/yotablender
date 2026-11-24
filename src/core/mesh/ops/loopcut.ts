@@ -3,7 +3,7 @@
 // The ring stops at triangles/n-gons and borders; faces outside the ring that share a cut edge
 // (e.g. an n-gon cap) get the new vertices inserted into their outline, so there is no crack.
 
-import { cloneData, edgeKey, type MeshData } from '../mesh';
+import { addVertex, cloneData, edgeKey, lerpColor, type MeshData } from '../mesh';
 import { edgeRing } from './select';
 import { emptySelection, flushSelection } from '../selection';
 import { checkResult, OpError, type OpResult } from './opResult';
@@ -27,9 +27,8 @@ export function loopCut(mesh: MeshData, a: number, b: number, cuts = 1, factor =
       // Parameters are defined from `from` the first time an edge is met (that is the ring's
       // consistent side), then stored low → high.
       pts = params.map((p) => {
-        const i = pos.length / 3;
-        for (let c = 0; c < 3; c++) pos.push(pos[from * 3 + c] + (pos[to * 3 + c] - pos[from * 3 + c]) * p);
-        return i;
+        const at = (c: number) => pos[from * 3 + c] + (pos[to * 3 + c] - pos[from * 3 + c]) * p;
+        return addVertex(data, at(0), at(1), at(2), lerpColor(data, from, to, p));
       });
       cutsOn.set(k, from < to ? pts : pts.slice().reverse());
       return pts;
@@ -39,6 +38,7 @@ export function loopCut(mesh: MeshData, a: number, b: number, cuts = 1, factor =
 
   const ringFaces = new Set<number>();
   const newFaces: number[][] = [];
+  const newMats: number[] = [];
   for (const { face, he } of ring.steps) {
     ringFaces.add(face);
     // Quad p0 p1 p2 p3 with entry edge p0→p1 and exit edge p2→p3.
@@ -51,13 +51,18 @@ export function loopCut(mesh: MeshData, a: number, b: number, cuts = 1, factor =
     const left = [p0, ...c], right = [p3, ...d];
     left.push(p1);
     right.push(p2);
-    for (let i = 0; i < left.length - 1; i++) newFaces.push([left[i], left[i + 1], right[i + 1], right[i]]);
+    for (let i = 0; i < left.length - 1; i++) {
+      newFaces.push([left[i], left[i + 1], right[i + 1], right[i]]);
+      newMats.push(data.faceMats?.[face] ?? 0);
+    }
   }
 
   // Rebuild the face list: ring faces are replaced; other faces get cut points spliced in.
   const faces: number[][] = [];
+  const mats: number[] = [];
   data.faces.forEach((f, fi) => {
     if (ringFaces.has(fi)) return;
+    mats.push(data.faceMats?.[fi] ?? 0);
     const out: number[] = [];
     for (let i = 0; i < f.length; i++) {
       const u = f[i], w = f[(i + 1) % f.length];
@@ -69,6 +74,7 @@ export function loopCut(mesh: MeshData, a: number, b: number, cuts = 1, factor =
     faces.push(out);
   });
   data.faces = [...faces, ...newFaces];
+  if (data.faceMats) data.faceMats = [...mats, ...newMats];
   // Loose edges that were cut (not possible for ring edges, which always have faces) stay as is.
   checkResult(data, 'Loop Cut');
 

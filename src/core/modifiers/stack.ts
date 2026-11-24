@@ -19,6 +19,12 @@ export interface EvalResult {
   looseEdges: [number, number][];
   /** Changes whenever tris/faces change; lets the renderer reuse index buffers. */
   topoKey: number;
+  /** Triangle ranges per material slot (tris are sorted by slot). */
+  groups: { start: number; count: number; slot: number }[];
+  /** Evaluated color attribute (RGB per vertex), when the mesh has one. */
+  colors: Float32Array | null;
+  /** Changes when `colors` change (so the renderer only re-uploads then). */
+  colorKey: number;
   /** Milliseconds spent: plan rebuild (0 when cached) and per-frame evaluation. */
   buildMs: number;
   evalMs: number;
@@ -30,6 +36,8 @@ interface Chain {
   key: string;
   stages: Stage[];
   buffers: Float64Array[];
+  colorBuffers: Float64Array[];
+  colorVersion: number;
   result: EvalResult;
 }
 
@@ -50,6 +58,8 @@ export class StackEvaluator {
       Math.max(0, Math.min(3, opts.dragging ? Math.min(m.levels, m.drag_levels) : m.levels));
     const key =
       mesh.topoVersion +
+      '|' +
+      (mesh.colors ? 'C' : '') +
       '|' +
       active
         .map((m) =>
@@ -85,6 +95,8 @@ export class StackEvaluator {
 
   private build(key: string, mesh: Mesh, active: Modifier[], levelOf: (m: SubsurfModifier) => number): Chain {
     let nV = mesh.vertCount, faces = mesh.faces, loose = mesh.looseEdges;
+    // Which cage face every current face came from (for per-face materials).
+    let faceSrc: Int32Array = Int32Array.from(faces, (_, i) => i);
     const stages: Stage[] = [];
     const buffers: Float64Array[] = [];
     let curPos: ArrayLike<number> = mesh.positions;
@@ -100,6 +112,7 @@ export class StackEvaluator {
         curPos = buf;
         nV = plan.nOut;
         faces = plan.faces;
+        faceSrc = Int32Array.from(plan.faceSrc, (f) => faceSrc[f]);
         loose = plan.looseEdges;
       } else {
         const levels = levelOf(m);
@@ -108,16 +121,49 @@ export class StackEvaluator {
         stages.push({ kind: 'subsurf', plan });
         const buf = new Float64Array(plan.nFinal * 3);
         buffers.push(buf);
+        // Level 1 splits a k-gon into k quads, every later level splits each quad into 4, and
+        // children are stored contiguously per parent face.
+        const src: number[] = [];
+        const per = 4 ** (levels - 1);
+        faces.forEach((f, fi) => {
+          for (let k = 0; k < f.length * per; k++) src.push(faceSrc[fi]);
+        });
+        faceSrc = Int32Array.from(src);
         nV = plan.nFinal;
         faces = plan.faces;
         loose = plan.looseEdges;
       }
     }
-    const tris = triangulate(faces);
+    // Triangles sorted by material slot, one draw group per slot.
+    const slotOf = (f: number) => mesh.faceMats?.[faceSrc[f]] ?? 0;
+    let tris = triangulate(faces);
+    const groups: EvalResult['groups'] = [];
+    const slots = new Set<number>(faces.map((_, f) => slotOf(f)));
+    if (slots.size <= 1) {
+      groups.push({ start: 0, count: tris.length, slot: [...slots][0] ?? 0 });
+    } else {
+      const triFace: number[] = [];
+      faces.forEach((f, fi) => {
+        for (let k = 0; k < f.length - 2; k++) triFace.push(fi);
+      });
+      const order = triFace.map((_, t) => t).sort((a, b) => slotOf(triFace[a]) - slotOf(triFace[b]));
+      const sorted = new Uint32Array(tris.length);
+      order.forEach((t, i) => sorted.set(tris.subarray(t * 3, t * 3 + 3), i * 3));
+      tris = sorted;
+      let start = 0;
+      for (let i = 1; i <= order.length; i++) {
+        if (i === order.length || slotOf(triFace[order[i]]) !== slotOf(triFace[order[start]])) {
+          groups.push({ start: start * 3, count: (i - start) * 3, slot: slotOf(triFace[order[start]]) });
+          start = i;
+        }
+      }
+    }
     return {
       key,
       stages,
       buffers,
+      colorBuffers: stages.map((s) => new Float64Array(s.kind === 'mirror' ? s.plan.nOut * 3 : s.plan.nFinal * 3)),
+      colorVersion: -1,
       result: {
         nV,
         positions: new Float32Array(nV * 3),
@@ -126,6 +172,9 @@ export class StackEvaluator {
         faces,
         looseEdges: loose,
         topoKey: topoCounter++,
+        groups,
+        colors: mesh.colors ? new Float32Array(nV * 3) : null,
+        colorKey: 0,
         buildMs: 0,
         evalMs: 0,
       },
@@ -143,5 +192,22 @@ export class StackEvaluator {
     const out = chain.result.positions;
     for (let i = 0; i < out.length; i++) out[i] = cur[i];
     computeNormals(out, chain.result.tris, chain.result.normals);
+    if (mesh.colors && chain.result.colors && chain.colorVersion !== mesh.colorVersion) {
+      // Colors go through the same stencils as positions (RGB as if it were xyz, no mirroring).
+      chain.colorVersion = mesh.colorVersion;
+      const rgb = new Float64Array(mesh.vertCount * 3);
+      for (let v = 0; v < mesh.vertCount; v++) for (let k = 0; k < 3; k++) rgb[v * 3 + k] = mesh.colors[v * 4 + k];
+      let c: ArrayLike<number> = rgb;
+      chain.stages.forEach((s, i) => {
+        const buf = chain.colorBuffers[i];
+        if (s.kind === 'mirror') {
+          for (let o = 0; o < s.plan.nOut; o++) for (let k = 0; k < 3; k++) buf[o * 3 + k] = c[s.plan.src[o] * 3 + k];
+        } else evaluateSubdiv(s.plan, c, buf);
+        c = buf;
+      });
+      const co = chain.result.colors;
+      for (let i = 0; i < co.length; i++) co[i] = Math.min(1, Math.max(0, c[i]));
+      chain.result.colorKey++;
+    }
   }
 }

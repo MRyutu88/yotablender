@@ -25,7 +25,8 @@ export interface SceneObject {
   scale: Vec3;
   mesh: Mesh;
   modifiers: Modifier[];
-  materialId: string | null;
+  /** Material slots (material ids), like Blender's object.material_slots. Faces pick a slot. */
+  materialSlots: string[];
   visible: boolean;
   /** Blender's Shade Smooth / Flat. */
   shade_smooth: boolean;
@@ -68,12 +69,18 @@ export function newObject(name: string, mesh: Mesh, init: Partial<SceneObject> =
     scale: [1, 1, 1],
     mesh,
     modifiers: [],
-    materialId: DEFAULT_MATERIAL_ID,
+    materialSlots: [DEFAULT_MATERIAL_ID],
     visible: true,
     shade_smooth: false,
     editSelection: emptySelection(),
     ...init,
   };
+}
+
+/** Material of a slot (falls back to the first slot, then null). */
+export function slotMaterial(p: Project, o: SceneObject, slot: number): Material | null {
+  const id = o.materialSlots[slot] ?? o.materialSlots[0];
+  return p.materials.find((m) => m.id === id) ?? null;
 }
 
 export const objectMatrix = (o: SceneObject): Mat4 => compose(o.location, o.rotation_euler, o.scale);

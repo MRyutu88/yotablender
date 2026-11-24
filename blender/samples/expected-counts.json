@@ -6,7 +6,12 @@
    "faces": 9,
    "sizes": {
     "4": 9
-   }
+   },
+   "materials": {
+    "Material": 7,
+    "Shirt": 2
+   },
+   "hasColors": false
   },
   {
    "name": "Cylinder 8",
@@ -15,7 +20,11 @@
    "sizes": {
     "4": 8,
     "8": 2
-   }
+   },
+   "materials": {
+    "Material": 10
+   },
+   "hasColors": false
   },
   {
    "name": "Cone",
@@ -24,7 +33,11 @@
    "sizes": {
     "3": 6,
     "6": 1
-   }
+   },
+   "materials": {
+    "Material": 7
+   },
+   "hasColors": true
   },
   {
    "name": "Torus",
@@ -32,7 +45,11 @@
    "faces": 72,
    "sizes": {
     "4": 72
-   }
+   },
+   "materials": {
+    "Material": 72
+   },
+   "hasColors": false
   }
  ],
  "mirrored": [
@@ -42,7 +59,12 @@
    "faces": 18,
    "sizes": {
     "4": 18
-   }
+   },
+   "materials": {
+    "Material": 14,
+    "Shirt": 4
+   },
+   "hasColors": false
   },
   {
    "name": "Cylinder 8",
@@ -51,7 +73,11 @@
    "sizes": {
     "4": 8,
     "8": 2
-   }
+   },
+   "materials": {
+    "Material": 10
+   },
+   "hasColors": false
   },
   {
    "name": "Cone",
@@ -60,7 +86,11 @@
    "sizes": {
     "3": 6,
     "6": 1
-   }
+   },
+   "materials": {
+    "Material": 7
+   },
+   "hasColors": true
   },
   {
    "name": "Torus",
@@ -68,7 +98,11 @@
    "faces": 72,
    "sizes": {
     "4": 72
-   }
+   },
+   "materials": {
+    "Material": 72
+   },
+   "hasColors": false
   }
  ]
 }

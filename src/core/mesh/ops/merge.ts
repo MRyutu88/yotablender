@@ -22,6 +22,13 @@ export function mergeAtCenter(mesh: MeshData, sel: Selection): OpResult {
   data.positions[target * 3] = x / verts.length;
   data.positions[target * 3 + 1] = y / verts.length;
   data.positions[target * 3 + 2] = z / verts.length;
+  if (data.colors) {
+    for (let k = 0; k < 4; k++) {
+      let c = 0;
+      for (const v of verts) c += mesh.colors![v * 4 + k];
+      data.colors[target * 4 + k] = c / verts.length;
+    }
+  }
   return applyMerge(mesh, data, map, 'Merge');
 }
 
@@ -78,14 +85,16 @@ function applyMerge(orig: MeshData, data: MeshData, map: Map<number, number>, wh
   const m = (v: number) => map.get(v) ?? v;
 
   const faces: number[][] = [];
-  for (const f of data.faces) {
+  const mats: number[] = [];
+  data.faces.forEach((f, fi) => {
     const g: number[] = [];
     for (const v of f.map(m)) if (g[g.length - 1] !== v) g.push(v);
     while (g.length > 1 && g[0] === g[g.length - 1]) g.pop();
-    if (g.length < 3) continue; // collapsed to an edge or a point
-    if (new Set(g).size !== g.length) continue; // pinched face: drop it
+    if (g.length < 3) return; // collapsed to an edge or a point
+    if (new Set(g).size !== g.length) return; // pinched face: drop it
     faces.push(g);
-  }
+    mats.push(data.faceMats?.[fi] ?? 0);
+  });
   // Faces that now share the same vertices: same winding → keep one; opposite → both go.
   const bySet = new Map<string, number[]>();
   faces.forEach((f, i) => {
@@ -104,6 +113,7 @@ function applyMerge(orig: MeshData, data: MeshData, map: Map<number, number>, wh
     else idx.slice(1).forEach((i) => drop.add(i));
   }
   data.faces = faces.filter((_, i) => !drop.has(i));
+  if (data.faceMats) data.faceMats = mats.filter((_, i) => !drop.has(i));
 
   const faceEdges = new Set<number>();
   for (const f of data.faces) for (let i = 0; i < f.length; i++) faceEdges.add(edgeKey(f[i], f[(i + 1) % f.length]));

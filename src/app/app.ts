@@ -3,6 +3,7 @@
 
 import * as THREE from 'three';
 import type { Viewport } from '../render/viewport';
+import type { SlotLook } from '../render/objectView';
 import { projectCage, pickElement, pickObject, elementsInPolygon, type ScreenCage, type Pick } from '../render/picking';
 import { worldPerPixelAt, type GizmoHit, type GizmoMode } from '../render/gizmo';
 import { History, type Command } from '../core/history/history';
@@ -12,6 +13,7 @@ import {
   cloneSelection,
   convertSelectMode,
   emptySelection,
+  flushSelection,
   invertSelection,
   selectAll,
   type Selection,
@@ -33,7 +35,7 @@ import { edgeFromKey } from '../core/mesh/keys';
 import { StackEvaluator, type EvalResult } from '../core/modifiers/stack';
 import { newMirror, newSubsurf, sortStack, type Modifier, type ModifierType } from '../core/modifiers/types';
 import { buildPrimitive, PRIMITIVE_DEFAULTS, PRIMITIVE_LABELS, type PrimitiveType } from '../core/primitives/primitives';
-import { newObject, newProject, objectMatrix, uniqueName, uid, type Project, type SceneObject } from '../core/scene/scene';
+import { DEFAULT_MATERIAL_ID, newObject, newProject, objectMatrix, uniqueName, uid, type Material, type Project, type SceneObject } from '../core/scene/scene';
 import { transformDir, transformPoint } from '../core/math/mat4';
 import { normalize, type Vec3 } from '../core/math/vec3';
 import { deserializeProject } from '../core/io/projectJson';
@@ -369,7 +371,7 @@ export class App implements SceneHost {
         rotation_euler: [...o.rotation_euler],
         scale: [...o.scale],
         modifiers: structuredClone(o.modifiers),
-        materialId: o.materialId,
+        materialSlots: [...o.materialSlots],
         shade_smooth: o.shade_smooth,
         editSelection: cloneSelection(o.editSelection),
       });
@@ -696,12 +698,20 @@ export class App implements SceneHost {
   setMode(m: S.Mode): void {
     if (m === S.mode.value) return;
     this.cancelExtrudeFollow();
-    if (m === 'edit') {
+    if (m === 'edit' || m === 'paint') {
       const o = this.active ?? this.selectedObjects()[0];
-      if (!o) return S.toast('Select an object to edit', 'error');
-      if (!o.visible) return S.toast('Unhide the object to edit it', 'error');
+      if (!o) return S.toast(m === 'edit' ? 'Select an object to edit' : 'Select an object to paint', 'error');
+      if (!o.visible) return S.toast('Unhide the object first', 'error');
       S.activeId.value = o.id;
       S.selectedIds.value = new Set([o.id]);
+      if (m === 'paint' && !o.mesh.colors) {
+        // Like Blender, painting needs a color attribute: add one, filled with white.
+        this.push(
+          recordChange(this, 'Add Color Attribute', { ids: [o.id] }, () => {
+            o.mesh.setData({ ...o.mesh.snapshot(), colors: new Array(o.mesh.vertCount * 4).fill(1) });
+          }),
+        );
+      }
     }
     S.mode.value = m;
     S.adjustLast.value = null;
@@ -854,6 +864,264 @@ export class App implements SceneHost {
       return r;
     });
     if (cmd) S.toast(`Removed ${removed} vertices`);
+  }
+
+  // --- Vertex Paint -----------------------------------------------------------------------
+
+  private stroke: { obj: SceneObject; before: number[]; cage: ScreenCage; last: { x: number; y: number } } | null = null;
+
+  private paintObject(): SceneObject | null {
+    const o = S.mode.value === 'paint' ? this.active : null;
+    return o && o.mesh.colors ? o : null;
+  }
+
+  paintStart(x: number, y: number): void {
+    const o = this.paintObject();
+    if (!o) return;
+    if (S.paintTool.value === 'pick') return this.pickColor(x, y);
+    this.stroke = { obj: o, before: o.mesh.colors!.slice(), cage: projectCage(this.vp, o, false), last: { x, y } };
+    this.dab(x, y);
+  }
+
+  paintMove(x: number, y: number): void {
+    const s = this.stroke;
+    if (!s) {
+      if (S.paintTool.value === 'pick') this.pickColor(x, y);
+      return;
+    }
+    // Space dabs along the stroke so fast swipes still paint a continuous line.
+    const r = S.brushRadius.value;
+    const dist = Math.hypot(x - s.last.x, y - s.last.y);
+    const step = Math.max(2, r * 0.3);
+    const n = Math.floor(dist / step);
+    for (let i = 1; i <= n; i++) {
+      const t = (i * step) / dist;
+      this.dab(s.last.x + (x - s.last.x) * t, s.last.y + (y - s.last.y) * t);
+    }
+    if (n > 0) s.last = { x: s.last.x + ((x - s.last.x) * n * step) / dist, y: s.last.y + ((y - s.last.y) * n * step) / dist };
+    S.brushCursor.value = { x, y, r };
+  }
+
+  paintEnd(): void {
+    const s = this.stroke;
+    this.stroke = null;
+    S.brushCursor.value = null;
+    if (!s) return;
+    const after = s.obj.mesh.colors!.slice();
+    if (after.every((c, i) => c === s.before[i])) return;
+    this.push(this.colorsCommand(s.obj, s.before, after, S.paintTool.value === 'blur' ? 'Blur' : 'Paint'));
+  }
+
+  private colorsCommand(o: SceneObject, before: number[], after: number[], label: string): Command {
+    const put = (c: number[]) => () => {
+      if (o.mesh.colors && o.mesh.colors.length === c.length) {
+        o.mesh.colors = c.slice();
+        o.mesh.touchColors();
+      }
+      this.changed(false);
+    };
+    return { label, bytes: before.length * 16, undo: put(before), redo: put(after) };
+  }
+
+  /** One brush dab at a screen point. */
+  private dab(x: number, y: number): void {
+    const s = this.stroke!;
+    const c = s.obj.mesh.colors!;
+    const r = S.brushRadius.value, strength = S.brushStrength.value;
+    const [br, bg, bb] = S.brushColor.value;
+    const blur = S.paintTool.value === 'blur';
+    const topo = blur ? s.obj.mesh.topology() : null;
+    const src = blur ? c.slice() : c;
+    for (let v = 0; v < s.cage.sx.length; v++) {
+      if (!s.cage.visible[v]) continue;
+      const d = Math.hypot(s.cage.sx[v] - x, s.cage.sy[v] - y);
+      if (d >= r) continue;
+      const f = (1 - (d / r) ** 2) ** 2; // smooth falloff
+      const k = strength * f;
+      let tr = br, tg = bg, tb = bb;
+      if (blur && topo) {
+        // Average of the neighbours.
+        let n = 0;
+        tr = tg = tb = 0;
+        for (let e = topo.vEdgeStart[v]; e < topo.vEdgeStart[v + 1]; e++) {
+          const ed = topo.vEdges[e];
+          const o = topo.edgeV[ed * 2] === v ? topo.edgeV[ed * 2 + 1] : topo.edgeV[ed * 2];
+          tr += src[o * 4];
+          tg += src[o * 4 + 1];
+          tb += src[o * 4 + 2];
+          n++;
+        }
+        if (!n) continue;
+        tr /= n;
+        tg /= n;
+        tb /= n;
+      }
+      c[v * 4] += (tr - c[v * 4]) * k;
+      c[v * 4 + 1] += (tg - c[v * 4 + 1]) * k;
+      c[v * 4 + 2] += (tb - c[v * 4 + 2]) * k;
+    }
+    s.obj.mesh.touchColors();
+    S.brushCursor.value = { x, y, r };
+    this.vp.requestRender();
+  }
+
+  /** Eyedropper: takes the color of the visible vertex nearest the finger. */
+  private pickColor(x: number, y: number): void {
+    const o = this.paintObject();
+    if (!o) return;
+    const cage = projectCage(this.vp, o, false);
+    let best = -1, bd = 60;
+    for (let v = 0; v < cage.sx.length; v++) {
+      if (!cage.visible[v]) continue;
+      const d = Math.hypot(cage.sx[v] - x, cage.sy[v] - y);
+      if (d < bd) {
+        bd = d;
+        best = v;
+      }
+    }
+    if (best < 0) return;
+    const c = o.mesh.colors!;
+    S.brushColor.value = [c[best * 4], c[best * 4 + 1], c[best * 4 + 2]];
+    S.haptic(6);
+  }
+
+  /** Fills the whole object with the brush color. */
+  fillColor(): void {
+    const o = this.paintObject();
+    if (!o) return;
+    const before = o.mesh.colors!.slice();
+    const [r, g, b] = S.brushColor.value;
+    const after = before.map((v, i) => [r, g, b, v][i % 4]);
+    o.mesh.colors = after.slice();
+    o.mesh.touchColors();
+    this.push(this.colorsCommand(o, before, after, 'Fill'));
+  }
+
+  /** Removes the color attribute so the object shows its materials again. */
+  removeColors(): void {
+    const o = this.active;
+    if (!o?.mesh.colors) return;
+    this.push(
+      recordChange(this, 'Remove Color Attribute', { ids: [o.id] }, () => {
+        o.mesh.setData({ ...o.mesh.snapshot(), colors: undefined });
+        if (S.mode.value === 'paint') S.mode.value = 'object';
+      }),
+    );
+  }
+
+  // --- Materials --------------------------------------------------------------------------
+
+  /** A new material with a fresh name and a pleasant color from a small palette. */
+  private makeMaterial(): Material {
+    const palette: [number, number, number][] = [
+      [0.8, 0.25, 0.2],
+      [0.2, 0.45, 0.85],
+      [0.3, 0.7, 0.3],
+      [0.9, 0.7, 0.2],
+      [0.6, 0.3, 0.75],
+      [0.15, 0.15, 0.15],
+      [0.95, 0.95, 0.95],
+      [0.85, 0.55, 0.4],
+    ];
+    const c = palette[this.project.materials.length % palette.length];
+    return {
+      id: uid(),
+      name: uniqueName('Material', this.project.materials.map((m) => m.name)),
+      base_color: [c[0], c[1], c[2], 1],
+      roughness: 0.5,
+      metallic: 0,
+    };
+  }
+
+  /** Adds a material slot with a new material to the active object. */
+  addMaterialSlot(): void {
+    const o = this.active;
+    if (!o) return S.toast('Select an object first', 'error');
+    const mat = this.makeMaterial();
+    this.push(
+      recordChange(this, 'Add Material', { ids: [o.id], meshes: false, materials: true }, () => {
+        this.project.materials.push(mat);
+        o.materialSlots = [...o.materialSlots, mat.id];
+      }),
+    );
+    S.activeSlot.value = o.materialSlots.length - 1;
+  }
+
+  /** Removes a slot; its faces fall back to the previous slot (like Blender). */
+  removeMaterialSlot(slot: number): void {
+    const o = this.active;
+    if (!o || o.materialSlots.length <= 1) return S.toast('An object keeps at least one material', 'error');
+    this.push(
+      recordChange(this, 'Remove Material', { ids: [o.id], materials: true }, () => {
+        o.materialSlots = o.materialSlots.filter((_, i) => i !== slot);
+        if (o.mesh.faceMats) {
+          const fm = o.mesh.faceMats.map((m) => (m > slot ? m - 1 : m === slot ? Math.max(0, slot - 1) : m));
+          o.mesh.setData({ ...o.mesh.snapshot(), faceMats: fm.some((m) => m !== 0) ? fm : undefined });
+        }
+        // Drop materials no object uses any more.
+        const used = new Set(this.project.objects.flatMap((x) => x.materialSlots));
+        this.project.materials = this.project.materials.filter((m) => used.has(m.id) || m.id === DEFAULT_MATERIAL_ID);
+      }),
+    );
+    S.activeSlot.value = Math.max(0, Math.min(slot, o.materialSlots.length - 1));
+  }
+
+  /** Points a slot at another existing material. */
+  setSlotMaterial(slot: number, materialId: string): void {
+    const o = this.active;
+    if (!o || o.materialSlots[slot] === materialId) return;
+    this.push(
+      recordChange(this, 'Set Material', { ids: [o.id], meshes: false, materials: true }, () => {
+        o.materialSlots = o.materialSlots.map((id, i) => (i === slot ? materialId : id));
+      }),
+    );
+  }
+
+  /** Assigns a slot to the selected faces (Edit Mode), like Blender's Assign button. */
+  assignMaterialSlot(slot: number): void {
+    const o = this.editObject();
+    if (!o) return;
+    if (!o.editSelection.faces.size) return S.toast('Select faces first', 'error');
+    this.push(
+      recordChange(this, 'Assign Material', { ids: [o.id] }, () => {
+        const fm = o.mesh.faces.map((_, i) => (o.editSelection.faces.has(i) ? slot : (o.mesh.faceMats?.[i] ?? 0)));
+        o.mesh.setData({ ...o.mesh.snapshot(), faceMats: fm.some((m) => m !== 0) ? fm : undefined });
+      }),
+    );
+    S.haptic(10);
+  }
+
+  /** Selects every face that uses a slot. */
+  selectMaterialSlot(slot: number): void {
+    const o = this.editObject();
+    if (!o) return;
+    const faces = o.mesh.faces.map((_, i) => i).filter((i) => (o.mesh.faceMats?.[i] ?? 0) === slot);
+    const base = S.pickOp.value === 'add' ? cloneSelection(o.editSelection) : emptySelection();
+    for (const f of faces) base.faces.add(f);
+    this.applySelection(o, flushSelection(o.mesh, base, 'face'), 'Select by Material');
+  }
+
+  private matEdit: { before: Material[] } | null = null;
+
+  /**
+   * Edits a material. Live changes (slider/color drags) apply immediately; `commit` turns
+   * everything since the first live change into one undo step.
+   */
+  updateMaterial(id: string, patch: Partial<Material>, commit: boolean): void {
+    const m = this.project.materials.find((x) => x.id === id);
+    if (!m) return;
+    this.matEdit ??= { before: structuredClone(this.project.materials) };
+    Object.assign(m, patch);
+    this.changed(false);
+    if (!commit) return;
+    const before = this.matEdit.before;
+    const after = structuredClone(this.project.materials);
+    this.matEdit = null;
+    const put = (mats: Material[]) => () => {
+      this.project.materials = structuredClone(mats);
+      this.changed(false);
+    };
+    this.push({ label: 'Material', bytes: 2048, undo: put(before), redo: put(after) });
   }
 
   // --- Modifiers --------------------------------------------------------------------------
@@ -1093,6 +1361,7 @@ export class App implements SceneHost {
 
   /** Gizmo shown for transform tools when something is selected. */
   gizmoMode(): GizmoMode | null {
+    if (S.mode.value === 'paint') return null;
     const t = S.tool.value;
     return t === 'move' || t === 'rotate' || t === 'scale' ? t : null;
   }
@@ -1116,7 +1385,7 @@ export class App implements SceneHost {
     let evalMs = 0, buildMs = 0;
     for (const o of objs) {
       const dragging = sessionObjs.has(o) && !!this.session?.edit;
-      const stamp = `${o.mesh.topoVersion}|${o.mesh.posVersion}|${JSON.stringify(o.modifiers)}|${dragging}`;
+      const stamp = `${o.mesh.topoVersion}|${o.mesh.posVersion}|${o.mesh.colorVersion}|${JSON.stringify(o.modifiers)}|${dragging}`;
       let ev = this.evals.get(o.id);
       if (!ev || this.stamps.get(o.id) !== stamp) {
         let evaluator = this.evaluators.get(o.id);
@@ -1128,10 +1397,13 @@ export class App implements SceneHost {
         buildMs += ev.buildMs;
       }
       const view = this.vp.view(o.id);
-      const mat = this.project.materials.find((m) => m.id === o.materialId);
-      view.updateSurface(o, ev, mat?.base_color ?? [0.8, 0.8, 0.8, 1]);
+      const looks = o.materialSlots.map((id) => {
+        const m = this.project.materials.find((x) => x.id === id);
+        return { color: m?.base_color ?? [0.8, 0.8, 0.8, 1], roughness: m?.roughness ?? 0.5, metallic: m?.metallic ?? 0 } as SlotLook;
+      });
+      view.updateSurface(o, ev, looks, S.shading.value);
       if (xray !== this.lastXray) view.setXray(xray);
-      view.setOutline(editing || !sel.has(o.id) ? 'none' : o.id === S.activeId.value ? 'active' : 'selected');
+      view.setOutline(editing || S.mode.value === 'paint' || !sel.has(o.id) ? 'none' : o.id === S.activeId.value ? 'active' : 'selected');
       view.updateCage(editing === o ? o : null, {
         selectMode: S.selectMode.value,
         xray,
@@ -1139,6 +1411,7 @@ export class App implements SceneHost {
       });
     }
     this.lastXray = xray;
+    this.vp.useEnvironment(S.shading.value === 'material');
     if (evalMs || buildMs) this.lastEval = { evalMs, buildMs };
     const pivot = this.pivot();
     const gm = this.gizmoMode();
