@@ -56,7 +56,14 @@ if (import.meta.env.PROD) {
       onNeedRefresh: () => (S.updateReady.value = true),
       onOfflineReady: () => S.toast('Ready to work offline'),
     });
-    window.addEventListener('yb-apply-update', () => void update(true));
+    window.addEventListener('yb-apply-update', async () => {
+      void update(true);
+      // Belt and braces: talk to the waiting worker directly too (Workbox only does this when
+      // it registered that worker itself), and reload once the new version takes control.
+      navigator.serviceWorker.addEventListener('controllerchange', () => window.location.reload(), { once: true });
+      const reg = await navigator.serviceWorker.getRegistration();
+      reg?.waiting?.postMessage({ type: 'SKIP_WAITING' });
+    });
   });
 }
 
