@@ -1,7 +1,7 @@
 {
   "name": "yotablender",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "Touch-first low-poly character modeler for phones, with a Blender round-trip.",
   "scripts": {
