@@ -1,0 +1,74 @@
+{
+ "cage": [
+  {
+   "name": "Character Body",
+   "verts": 12,
+   "faces": 9,
+   "sizes": {
+    "4": 9
+   }
+  },
+  {
+   "name": "Cylinder 8",
+   "verts": 16,
+   "faces": 10,
+   "sizes": {
+    "4": 8,
+    "8": 2
+   }
+  },
+  {
+   "name": "Cone",
+   "verts": 7,
+   "faces": 7,
+   "sizes": {
+    "3": 6,
+    "6": 1
+   }
+  },
+  {
+   "name": "Torus",
+   "verts": 72,
+   "faces": 72,
+   "sizes": {
+    "4": 72
+   }
+  }
+ ],
+ "mirrored": [
+  {
+   "name": "Character Body",
+   "verts": 20,
+   "faces": 18,
+   "sizes": {
+    "4": 18
+   }
+  },
+  {
+   "name": "Cylinder 8",
+   "verts": 16,
+   "faces": 10,
+   "sizes": {
+    "4": 8,
+    "8": 2
+   }
+  },
+  {
+   "name": "Cone",
+   "verts": 7,
+   "faces": 7,
+   "sizes": {
+    "3": 6,
+    "6": 1
+   }
+  },
+  {
+   "name": "Torus",
+   "verts": 72,
+   "faces": 72,
+   "sizes": {
+    "4": 72
+   }
+  }
+ ]
+}
