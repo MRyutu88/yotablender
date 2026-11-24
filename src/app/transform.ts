@@ -39,6 +39,10 @@ export interface EditTarget {
   inv: Mat4;
   /** Full copy of positions before the drag (for mirror clipping). */
   all: Float64Array;
+  /** Influence per entry of `verts`: 1 for the selection, falloff for proportional neighbours. */
+  weights: Float32Array;
+  /** The selected vertices (proportional neighbours are added around these). */
+  selected: number[];
 }
 
 export interface SnapOptions {
@@ -169,7 +173,8 @@ export class TransformSession {
     for (const t of this.objTargets) {
       t.obj.location = [t.loc[0] + d[0], t.loc[1] + d[1], t.loc[2] + d[2]];
     }
-    if (this.edit) this.applyEdit((w) => [w[0] + d[0], w[1] + d[1], w[2] + d[2]]);
+    if (this.edit) this.applyEdit((w, k) => [w[0] + d[0] * k, w[1] + d[1] * k, w[2] + d[2] * k]);
+    this.reapply = () => this.applyMove(d);
   }
 
   // --- Rotate -------------------------------------------------------------------------------
@@ -223,11 +228,14 @@ export class TransformSession {
       t.obj.rotation_euler = compatibleEuler(rotToEuler(mulRot(R, eulerToRot(t.rot))), t.rot);
     }
     if (this.edit) {
-      this.applyEdit((w) => {
-        const r = apply3(R, [w[0] - p[0], w[1] - p[1], w[2] - p[2]]);
+      const axis = this.rotAxis();
+      this.applyEdit((w, k) => {
+        const Rk = k === 1 ? R : axisAngleToRot(axis, angle * k);
+        const r = apply3(Rk, [w[0] - p[0], w[1] - p[1], w[2] - p[2]]);
         return [p[0] + r[0], p[1] + r[1], p[2] + r[2]];
       });
     }
+    this.reapply = () => this.applyRotate(angle);
   }
 
   // --- Scale --------------------------------------------------------------------------------
@@ -258,16 +266,35 @@ export class TransformSession {
       t.obj.location = [p[0] + (t.loc[0] - p[0]) * s[0], p[1] + (t.loc[1] - p[1]) * s[1], p[2] + (t.loc[2] - p[2]) * s[2]];
       t.obj.scale = [t.scale[0] * s[0], t.scale[1] * s[1], t.scale[2] * s[2]];
     }
-    if (this.edit) this.applyEdit((w) => [p[0] + (w[0] - p[0]) * s[0], p[1] + (w[1] - p[1]) * s[1], p[2] + (w[2] - p[2]) * s[2]]);
+    if (this.edit) {
+      this.applyEdit((w, k) => {
+        const sk = [1 + (s[0] - 1) * k, 1 + (s[1] - 1) * k, 1 + (s[2] - 1) * k];
+        return [p[0] + (w[0] - p[0]) * sk[0], p[1] + (w[1] - p[1]) * sk[1], p[2] + (w[2] - p[2]) * sk[2]];
+      });
+    }
+    this.reapply = () => this.applyScale(f);
   }
 
   // --- Edit mode ----------------------------------------------------------------------------
-  private applyEdit(fn: (world: Vec3) => Vec3): void {
+  private reapply: (() => void) | null = null;
+
+  /** Changes the proportional-editing radius mid-drag and re-applies the current transform. */
+  setProportionalRadius(radius: number | null): void {
+    const e = this.edit;
+    if (!e) return;
+    // Put everything back first, then rebuild the affected set from the original positions.
+    const pos = e.obj.mesh.positions;
+    for (let i = 0; i < e.all.length; i++) pos[i] = e.all[i];
+    this.edit = makeEditTarget(e.obj, e.selected, radius, e.all);
+    this.reapply?.();
+  }
+
+  private applyEdit(fn: (world: Vec3, weight: number) => Vec3): void {
     const e = this.edit!;
     const pos = e.obj.mesh.positions;
     for (let i = 0; i < e.verts.length; i++) {
       const w = transformPoint(e.m, [e.start[i * 3], e.start[i * 3 + 1], e.start[i * 3 + 2]]);
-      const l = transformPoint(e.inv, fn(w));
+      const l = transformPoint(e.inv, fn(w, e.weights[i]));
       const v = e.verts[i] * 3;
       pos[v] = l[0];
       pos[v + 1] = l[1];
@@ -302,13 +329,45 @@ export class TransformSession {
   }
 }
 
-export function makeEditTarget(obj: SceneObject, verts: number[]): EditTarget {
+/**
+ * What an edit-mode transform moves. With `proportional` (a world-space radius), unselected
+ * vertices within that distance of the selection follow with Blender's "Smooth" falloff.
+ */
+export function makeEditTarget(
+  obj: SceneObject,
+  selected: number[],
+  proportional: number | null = null,
+  original: ArrayLike<number> = obj.mesh.positions,
+): EditTarget {
   const m = objectMatrix(obj);
-  const v = Int32Array.from(verts);
+  const all = Float64Array.from(original);
+  const list = [...selected];
+  const weights: number[] = selected.map(() => 1);
+  if (proportional && proportional > 0) {
+    const R = proportional;
+    const isSel = new Uint8Array(all.length / 3);
+    for (const v of selected) isSel[v] = 1;
+    const world = (i: number) => transformPoint(m, [all[i * 3], all[i * 3 + 1], all[i * 3 + 2]]);
+    const selWorld = selected.map(world);
+    for (let i = 0; i < all.length / 3; i++) {
+      if (isSel[i]) continue;
+      const w = world(i);
+      let best = Infinity;
+      for (const s of selWorld) {
+        const d = (w[0] - s[0]) ** 2 + (w[1] - s[1]) ** 2 + (w[2] - s[2]) ** 2;
+        if (d < best) best = d;
+      }
+      const d = Math.sqrt(best);
+      if (d >= R) continue;
+      const t = 1 - d / R;
+      list.push(i);
+      weights.push(3 * t * t - 2 * t * t * t);
+    }
+  }
+  const v = Int32Array.from(list);
   const start = new Float64Array(v.length * 3);
-  const pos = obj.mesh.positions;
-  v.forEach((vi, i) => start.set([pos[vi * 3], pos[vi * 3 + 1], pos[vi * 3 + 2]], i * 3));
-  return { obj, verts: v, start, m, inv: invert(m), all: Float64Array.from(pos) };
+  v.forEach((vi, i) => start.set([all[vi * 3], all[vi * 3 + 1], all[vi * 3 + 2]], i * 3));
+  return { obj, verts: v, start, m, inv: invert(m), all, weights: Float32Array.from(weights), selected: [...selected] };
 }
 
 const apply3 = (r: number[][], v: Vec3): Vec3 => [

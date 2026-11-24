@@ -22,6 +22,10 @@ export class InputController implements GestureHandler {
   constructor(private app: App) {}
 
   touchDown(): boolean {
+    if (S.popover.value) {
+      S.popover.value = null;
+      return true;
+    }
     // In portrait an open panel covers part of the view: the first touch on the model closes it
     // and does nothing else (so it can't deselect by accident).
     if (S.sheet.value && window.matchMedia('(orientation: portrait)').matches) {
@@ -134,6 +138,11 @@ export class InputController implements GestureHandler {
   }
 
   wheel(deltaY: number, p: Pt): void {
+    if (this.app.session?.edit && S.propEnabled.value) {
+      // Like Blender: the wheel resizes the proportional falloff while transforming.
+      this.app.setPropRadius(S.propRadius.value * Math.exp(deltaY * 0.0015));
+      return;
+    }
     this.app.vp.cam.zoom(Math.exp(deltaY * 0.0015), p);
     this.app.vp.requestRender();
   }

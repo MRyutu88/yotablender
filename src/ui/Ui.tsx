@@ -24,7 +24,9 @@ export function Ui({ app, installPrompt }: { app: App; installPrompt: (() => voi
       {sheet === 'item' && <ItemSheet app={app} />}
       {sheet === 'menu' && <MenuSheet app={app} installPrompt={installPrompt} />}
       {sheet === 'help' && <HelpSheet />}
+      <SelectPopover app={app} />
       <Marquee />
+      <PropCircle />
       <Loupe app={app} />
       <Hud />
       <Toasts />
@@ -106,6 +108,19 @@ function AdjustLastPanel({ app }: { app: App }) {
     ));
   } else if (a.kind === 'extrude') {
     body = [<Stepper key="o" label="Offset" value={a.values.offset} min={-100} max={100} step={0.05} onChange={(v) => app.setExtrudeOffset(v)} />];
+  } else if (a.specs) {
+    body = Object.entries(a.specs).map(([k, spec]) => (
+      <Stepper
+        key={k}
+        label={spec.label ?? labelize(k)}
+        value={a.values[k]}
+        min={spec.min}
+        max={spec.max}
+        step={spec.step}
+        int={spec.int}
+        onChange={(v) => app.adjustOp({ ...a.values, [k]: v })}
+      />
+    ));
   }
   return (
     <aside class={`adjust ${open ? 'open' : ''}`}>
@@ -264,17 +279,29 @@ function BottomBars({ app }: { app: App }) {
   };
   return (
     <div class="bottom">
+      {edit && isT && S.propEnabled.value && <PropBar app={app} />}
       <div class="chips">
-        <Segmented
-          class="pickop"
-          value={S.pickOp.value}
-          onChange={(v) => (S.pickOp.value = v)}
-          options={[
-            { value: 'replace', icon: Icon.equals({ size: 18 }), title: 'Replace selection' },
-            { value: 'add', icon: Icon.plus({ size: 18 }), title: 'Add to selection' },
-            { value: 'sub', icon: Icon.minus({ size: 18 }), title: 'Remove from selection' },
-          ]}
-        />
+        {isT ? (
+          // Compact while a transform tool needs the room: one chip cycling = → + → −.
+          <button
+            class={`chip ${S.pickOp.value !== 'replace' ? 'active' : ''}`}
+            aria-label={`Selection: ${S.pickOp.value}; tap to change`}
+            onClick={() => (S.pickOp.value = S.pickOp.value === 'replace' ? 'add' : S.pickOp.value === 'add' ? 'sub' : 'replace')}
+          >
+            {S.pickOp.value === 'add' ? Icon.plus({ size: 18 }) : S.pickOp.value === 'sub' ? Icon.minus({ size: 18 }) : Icon.equals({ size: 18 })}
+          </button>
+        ) : (
+          <Segmented
+            class="pickop"
+            value={S.pickOp.value}
+            onChange={(v) => (S.pickOp.value = v)}
+            options={[
+              { value: 'replace', icon: Icon.equals({ size: 18 }), title: 'Replace selection' },
+              { value: 'add', icon: Icon.plus({ size: 18 }), title: 'Add to selection' },
+              { value: 'sub', icon: Icon.minus({ size: 18 }), title: 'Remove from selection' },
+            ]}
+          />
+        )}
         <div class="spacer" />
         {isT && (
           <>
@@ -298,6 +325,16 @@ function BottomBars({ app }: { app: App }) {
                 </button>
               );
             })}
+            {edit && (
+              <button
+                class={`chip ${S.propEnabled.value ? 'active' : ''}`}
+                aria-pressed={S.propEnabled.value}
+                aria-label="Proportional editing"
+                onClick={() => (S.propEnabled.value = !S.propEnabled.value)}
+              >
+                {Icon.falloff({ size: 18 })}
+              </button>
+            )}
             <button
               class={`chip ${S.snapEnabled.value ? 'active' : ''}`}
               aria-pressed={S.snapEnabled.value}
@@ -313,12 +350,12 @@ function BottomBars({ app }: { app: App }) {
         {edit ? (
           <>
             <IconButton icon={Icon.extrude()} label="Extrude" onClick={() => app.extrude()} />
+            <IconButton icon={Icon.inset()} label="Inset" onClick={() => app.inset()} />
+            <IconButton icon={Icon.loopcut()} label="Loop Cut" onClick={() => app.loopCut()} />
+            <IconButton icon={Icon.select()} label="Select" active={S.popover.value === 'select'} onClick={() => (S.popover.value = S.popover.value ? null : 'select')} />
             <IconButton icon={Icon.merge()} label="Merge" onClick={() => app.mergeCenter()} />
             <IconButton icon={Icon.mergeDist()} label="By dist." onClick={() => app.mergeDistance()} />
             <IconButton icon={Icon.trash()} label="Delete" onClick={() => app.deleteElements()} />
-            <IconButton icon={Icon.all()} label="All" onClick={() => app.selectAllToggle('all')} />
-            <IconButton icon={Icon.none()} label="None" onClick={() => app.selectAllToggle('none')} />
-            <IconButton icon={Icon.invert()} label="Invert" onClick={() => app.selectAllToggle('invert')} />
             <IconButton icon={Icon.wrench()} label="Modifiers" active={S.sheet.value === 'modifiers'} onClick={() => toggleSheet('modifiers')} />
             <IconButton icon={Icon.sliders()} label="Item" active={S.sheet.value === 'item'} onClick={() => toggleSheet('item')} />
           </>
@@ -346,6 +383,57 @@ function BottomBars({ app }: { app: App }) {
         <IconButton icon={Icon.rotate()} label="Rotate" active={t === 'rotate'} onClick={() => setTool('rotate')} />
         <IconButton icon={Icon.scale()} label="Scale" active={t === 'scale'} onClick={() => setTool('scale')} />
       </nav>
+    </div>
+  );
+}
+
+/** Falloff radius slider (log scale, 1 cm … 10 m) shown while proportional editing is on. */
+function PropBar({ app }: { app: App }) {
+  const r = S.propRadius.value;
+  const toSlider = (v: number) => Math.log10(v);
+  return (
+    <label class="propbar">
+      {Icon.falloff({ size: 18 })}
+      <span>Falloff</span>
+      <input
+        type="range"
+        min={-2}
+        max={1}
+        step={0.01}
+        value={toSlider(r)}
+        aria-label="Proportional falloff radius"
+        onInput={(e) => app.setPropRadius(Math.pow(10, Number((e.target as HTMLInputElement).value)))}
+      />
+      <b>{r < 1 ? `${(r * 100).toFixed(0)} cm` : `${r.toFixed(2)} m`}</b>
+    </label>
+  );
+}
+
+function PropCircle() {
+  const c = S.propCircle.value;
+  if (!c) return null;
+  return (
+    <svg class="propcircle" width="100%" height="100%">
+      <circle cx={c.x} cy={c.y} r={c.r} />
+    </svg>
+  );
+}
+
+function SelectPopover({ app }: { app: App }) {
+  if (S.popover.value !== 'select' || S.mode.value !== 'edit') return null;
+  const run = (fn: () => void) => () => {
+    fn();
+    S.popover.value = null;
+  };
+  return (
+    <div class="popover" role="menu" aria-label="Select">
+      <IconButton icon={Icon.all()} label="All" onClick={run(() => app.selectAllToggle('all'))} />
+      <IconButton icon={Icon.none()} label="None" onClick={run(() => app.selectAllToggle('none'))} />
+      <IconButton icon={Icon.invert()} label="Invert" onClick={run(() => app.selectAllToggle('invert'))} />
+      <IconButton icon={Icon.linked()} label="Linked" onClick={run(() => app.selectSpecial('linked'))} />
+      <IconButton icon={Icon.loop()} label="Loop" onClick={run(() => app.selectSpecial('loop'))} />
+      <IconButton icon={Icon.ring()} label="Ring" onClick={run(() => app.selectSpecial('ring'))} />
+      <p class="note">Tip: double-tap an edge for its loop, a vertex or face for the whole piece.</p>
     </div>
   );
 }

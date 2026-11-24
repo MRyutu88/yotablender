@@ -9,6 +9,7 @@ import type { PrimitiveType } from '../core/primitives/primitives';
 export type Mode = 'object' | 'edit';
 export type ToolId = 'select' | 'box' | 'lasso' | 'move' | 'rotate' | 'scale';
 export type PickOp = 'replace' | 'add' | 'sub';
+export const popover = signal<null | 'select'>(null);
 export type SheetId = null | 'add' | 'outliner' | 'modifiers' | 'menu' | 'item' | 'projects' | 'help' | 'export';
 
 /** Axis constraint for transforms: one axis, a plane (all but one axis), or a custom direction. */
@@ -18,11 +19,13 @@ export type Constraint =
   | { kind: 'dir'; dir: Vec3; label: string };
 
 export interface AdjustLast {
-  kind: 'primitive' | 'extrude';
+  kind: 'primitive' | 'extrude' | 'loopcut' | 'inset';
   title: string;
   /** For primitives: the type, so the panel knows which parameters to show. */
   primitive?: PrimitiveType;
   values: Record<string, number>;
+  /** Limits for each value (non-primitive kinds). */
+  specs?: Record<string, { min: number; max: number; step: number; int?: boolean; label?: string }>;
 }
 
 export interface Toast {
@@ -59,6 +62,11 @@ export const transforming = signal(false);
 export const marquee = signal<{ kind: 'box' | 'lasso'; points: [number, number][] } | null>(null);
 export const loupe = signal<{ x: number; y: number } | null>(null);
 export const precision = signal(false);
+/** Proportional editing (Edit Mode transforms): on/off and falloff radius in meters. */
+export const propEnabled = signal(false);
+export const propRadius = signal(0.5);
+/** Falloff circle shown while dragging with proportional editing (CSS px). */
+export const propCircle = signal<{ x: number; y: number; r: number } | null>(null);
 
 export const isTransformTool = computed(() => tool.value === 'move' || tool.value === 'rotate' || tool.value === 'scale');
 

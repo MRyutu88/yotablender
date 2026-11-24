@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import type { Viewport } from '../render/viewport';
 import { projectCage, pickElement, pickObject, elementsInPolygon, type ScreenCage, type Pick } from '../render/picking';
-import type { GizmoHit, GizmoMode } from '../render/gizmo';
+import { worldPerPixelAt, type GizmoHit, type GizmoMode } from '../render/gizmo';
 import { History, type Command } from '../core/history/history';
 import { Mesh, bounds, type MeshData } from '../core/mesh/mesh';
 import {
@@ -17,7 +17,19 @@ import {
   type Selection,
   type SelectMode,
 } from '../core/mesh/selection';
-import { extrude as extrudeOp, deleteSelected as deleteOp, mergeAtCenter, mergeByDistance, OpError } from '../core/mesh/ops';
+import {
+  extrude as extrudeOp,
+  deleteSelected as deleteOp,
+  mergeAtCenter,
+  mergeByDistance,
+  loopCut as loopCutOp,
+  inset as insetOp,
+  selectLinked as selectLinkedOp,
+  selectLoop as selectLoopOp,
+  selectRing as selectRingOp,
+  OpError,
+} from '../core/mesh/ops';
+import { edgeFromKey } from '../core/mesh/keys';
 import { StackEvaluator, type EvalResult } from '../core/modifiers/stack';
 import { newMirror, newSubsurf, sortStack, type Modifier, type ModifierType } from '../core/modifiers/types';
 import { buildPrimitive, PRIMITIVE_DEFAULTS, PRIMITIVE_LABELS, type PrimitiveType } from '../core/primitives/primitives';
@@ -498,22 +510,79 @@ export class App implements SceneHost {
     }
   }
 
+  private lastTap: { index: number; mode: SelectMode; t: number; pushed: boolean } | null = null;
+
   private editTap(x: number, y: number): void {
     const o = this.active;
     if (!o) return;
     const cage = projectCage(this.vp, o, S.xray.value);
     const pick = pickElement(o, cage, S.selectMode.value, x, y, 30);
-    this.applyEditPick(o, pick ? [pick.index] : [], S.pickOp.value === 'add' ? 'toggle' : S.pickOp.value);
+    const now = performance.now();
+    const dbl = pick && this.lastTap && this.lastTap.index === pick.index && this.lastTap.mode === pick.kind && now - this.lastTap.t < 380;
+    if (dbl && pick) {
+      // Double-tap: edge → its edge loop (Blender's Alt+click); vertex/face → the linked piece.
+      // If the first tap changed the selection, replace that undo step with the bigger one.
+      if (this.lastTap!.pushed) this.history.undo();
+      this.lastTap = null;
+      if (pick.kind === 'edge') {
+        const [a, b] = edgeFromKey(pick.index);
+        this.applySelection(o, selectLoopOp(o.mesh, o.editSelection, a, b, S.pickOp.value === 'add'), 'Select Loop');
+      } else {
+        const base = applyPick(o.mesh, o.editSelection, S.selectMode.value, [pick.index], S.pickOp.value === 'add' ? 'add' : 'replace');
+        this.applySelection(o, selectLinkedOp(o.mesh, base, S.selectMode.value), 'Select Linked');
+      }
+      S.haptic(14);
+      return;
+    }
+    const pushed = this.applyEditPick(o, pick ? [pick.index] : [], S.pickOp.value === 'add' ? 'toggle' : S.pickOp.value);
+    this.lastTap = pick ? { index: pick.index, mode: pick.kind, t: now, pushed } : null;
     if (pick) S.haptic();
   }
 
-  private applyEditPick(o: SceneObject, items: number[], op: 'replace' | 'add' | 'sub' | 'toggle'): void {
-    if (!items.length && op !== 'replace') return;
+  private applySelection(o: SceneObject, after: Selection, label: string): void {
+    const before = cloneSelection(o.editSelection);
+    const conv = convertSelectMode(o.mesh, after, S.selectMode.value);
+    if (sameSel(before, conv)) return;
+    o.editSelection = conv;
+    const cmd = editSelectionCommand(this, o, before, conv);
+    cmd.label = label;
+    this.push(cmd);
+  }
+
+  /** Select Linked / Loop / Ring from the Select menu. */
+  selectSpecial(kind: 'linked' | 'loop' | 'ring'): void {
+    const o = this.editObject();
+    if (!o) return;
+    if (kind === 'linked') {
+      if (!o.editSelection.verts.size) return S.toast('Select something first', 'error');
+      return this.applySelection(o, selectLinkedOp(o.mesh, o.editSelection, S.selectMode.value), 'Select Linked');
+    }
+    const edge = this.oneEdge(o);
+    if (edge === null) return;
+    const [a, b] = edgeFromKey(edge);
+    const add = S.pickOp.value === 'add';
+    this.applySelection(o, kind === 'loop' ? selectLoopOp(o.mesh, o.editSelection, a, b, add) : selectRingOp(o.mesh, o.editSelection, a, b, add), kind === 'loop' ? 'Select Loop' : 'Select Ring');
+  }
+
+  /** The edge to act on: the single selected edge (any one of them if several). */
+  private oneEdge(o: SceneObject): number | null {
+    const edges = [...o.editSelection.edges];
+    if (!edges.length) {
+      S.toast('Select an edge first (Edge mode)', 'error');
+      return null;
+    }
+    return edges[edges.length - 1];
+  }
+
+  /** Returns whether the selection changed (an undo step was pushed). */
+  private applyEditPick(o: SceneObject, items: number[], op: 'replace' | 'add' | 'sub' | 'toggle'): boolean {
+    if (!items.length && op !== 'replace') return false;
     const before = cloneSelection(o.editSelection);
     const after = applyPick(o.mesh, before, S.selectMode.value, items, op);
-    if (sameSel(before, after)) return;
+    if (sameSel(before, after)) return false;
     o.editSelection = after;
     this.push(editSelectionCommand(this, o, before, after));
+    return true;
   }
 
   /** Touch-and-hold in Edit Mode: show the loupe and the candidate under the finger. */
@@ -703,6 +772,80 @@ export class App implements SceneHost {
     this.runOp('Merge at Center', (o) => mergeAtCenter(o.mesh, o.editSelection));
   }
 
+  private lastLoopEdge: [number, number] | null = null;
+
+  /** Loop Cut through the selected edge's ring. Adjust Last: number of cuts and slide. */
+  loopCut(cuts = 1, factor = 0.5, edge?: [number, number]): void {
+    const o = this.editObject();
+    if (!o) return;
+    let ab = edge;
+    if (!ab) {
+      const k = this.oneEdge(o);
+      if (k === null) return;
+      ab = edgeFromKey(k);
+    }
+    const [a, b] = ab;
+    const cmd = this.runOp('Loop Cut', (obj) => loopCutOp(obj.mesh, a, b, cuts, factor));
+    if (!cmd) return;
+    this.lastLoopEdge = ab;
+    S.adjustLast.value = {
+      kind: 'loopcut',
+      title: 'Loop Cut',
+      values: { cuts, factor },
+      specs: {
+        cuts: { min: 1, max: 16, step: 1, int: true, label: 'Cuts' },
+        factor: { min: 0.02, max: 0.98, step: 0.05, label: 'Slide' },
+      },
+    };
+  }
+
+  /** Inset the selected faces. Adjust Last: thickness and depth. */
+  inset(thickness?: number, depth = 0): void {
+    const o = this.editObject();
+    if (!o) return;
+    if (!o.editSelection.faces.size) return S.toast('Select faces to inset', 'error');
+    const th = thickness ?? this.defaultInset(o);
+    const cmd = this.runOp('Inset', (obj) => insetOp(obj.mesh, obj.editSelection, th, depth));
+    if (!cmd) return;
+    S.adjustLast.value = {
+      kind: 'inset',
+      title: 'Inset',
+      values: { thickness: Math.round(th * 1000) / 1000, depth },
+      specs: {
+        thickness: { min: 0.001, max: 10, step: 0.02, label: 'Thickness' },
+        depth: { min: -10, max: 10, step: 0.05, label: 'Depth' },
+      },
+    };
+  }
+
+  /** A quarter of the average edge length of the selected faces. */
+  private defaultInset(o: SceneObject): number {
+    let sum = 0, n = 0;
+    for (const f of o.editSelection.faces) {
+      const face = o.mesh.faces[f];
+      if (!face) continue;
+      for (let i = 0; i < face.length; i++) {
+        const p = o.mesh.getVert(face[i]), q = o.mesh.getVert(face[(i + 1) % face.length]);
+        sum += Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
+        n++;
+      }
+    }
+    return n ? (sum / n) * 0.25 : 0.1;
+  }
+
+  /** Adjust Last Operation for Loop Cut / Inset: undo and redo with the new values. */
+  adjustOp(values: Record<string, number>): void {
+    const a = S.adjustLast.value;
+    if (!a) return;
+    if (a.kind === 'loopcut' && this.lastLoopEdge) {
+      this.history.undo();
+      this.loopCut(values.cuts, values.factor, this.lastLoopEdge);
+    } else if (a.kind === 'inset') {
+      this.history.undo();
+      this.inset(values.thickness, values.depth);
+    }
+  }
+
   mergeDistance(threshold = 0.0001): void {
     let removed = 0;
     const cmd = this.runOp('Merge by Distance', (o) => {
@@ -835,7 +978,7 @@ export class App implements SceneHost {
     const snap = { enabled: S.snapEnabled.value, ...S.snapSettings.value };
     const o = this.editObject();
     if (o) {
-      const t = makeEditTarget(o, [...o.editSelection.verts]);
+      const t = makeEditTarget(o, [...o.editSelection.verts], S.propEnabled.value ? S.propRadius.value : null);
       this.session = new TransformSession(kind, this.vp.cam, { x, y }, c, { edit: t }, pivot, snap);
       this.sessionRecord = null;
     } else {
@@ -853,6 +996,7 @@ export class App implements SceneHost {
   updateTransform(x: number, y: number, precision: boolean): void {
     if (!this.session) return;
     this.session.update({ x, y }, precision);
+    this.updatePropCircle();
     S.readout.value = this.session.label;
     S.precision.value = precision;
     this.vp.requestRender();
@@ -863,6 +1007,7 @@ export class App implements SceneHost {
     if (!s) return;
     this.session = null;
     S.transforming.value = false;
+    S.propCircle.value = null;
     S.readout.value = null;
     S.precision.value = false;
     this.vp.gizmo.highlight = null;
@@ -922,6 +1067,28 @@ export class App implements SceneHost {
     S.adjustLast.value = { kind: 'extrude', title: 'Extrude', values: { offset } };
     this.changed(false);
     this.autosaver.schedule();
+  }
+
+  /** Sets the proportional falloff radius (live while dragging). */
+  setPropRadius(r: number): void {
+    const radius = Math.min(50, Math.max(0.01, r));
+    S.propRadius.value = radius;
+    if (this.session?.edit && S.propEnabled.value) {
+      this.session.setProportionalRadius(radius);
+      this.updatePropCircle();
+      this.vp.requestRender();
+    }
+  }
+
+  private updatePropCircle(): void {
+    const s = this.session;
+    if (!s?.edit || !S.propEnabled.value) {
+      S.propCircle.value = null;
+      return;
+    }
+    const p = new THREE.Vector3(...s.pivot);
+    const c = this.vp.cam.project(p.clone());
+    S.propCircle.value = { x: c.x, y: c.y, r: S.propRadius.value / worldPerPixelAt(this.vp.cam, p) };
   }
 
   /** Gizmo shown for transform tools when something is selected. */

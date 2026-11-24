@@ -113,9 +113,14 @@ export function extrude(mesh: MeshData, sel: Selection): OpResult {
 
   // New selection: the copies that will be moved, like Blender.
   const s = emptySelection();
-  for (const d of dup.values()) if (remap[d] >= 0) s.verts.add(remap[d]);
+  const dupPairs: { src: number; dup: number }[] = [];
+  for (const [orig, d] of dup) {
+    if (remap[d] < 0) continue;
+    s.verts.add(remap[d]);
+    dupPairs.push({ src: orig, dup: remap[d] }); // src = vertex index in the input mesh
+  }
   const selection: Selection = flushSelection(out, s, 'vert');
-  return { data: out, selection, normal };
+  return { data: out, selection, normal, dupPairs };
 }
 
 /** Orients wire edges so consecutive edges in a chain run head-to-tail. */

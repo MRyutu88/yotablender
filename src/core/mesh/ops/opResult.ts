@@ -10,6 +10,8 @@ export interface OpResult {
   selection: Selection;
   /** For extrude: the direction to move the new geometry along (object space), if any. */
   normal?: [number, number, number];
+  /** For extrude: each new copy (output index) and the input vertex it was copied from. */
+  dupPairs?: { src: number; dup: number }[];
 }
 
 /** Refuses results that would break the mesh. Ops never commit invalid topology. */
