@@ -19,7 +19,7 @@ export type Constraint =
   | { kind: 'dir'; dir: Vec3; label: string };
 
 export interface AdjustLast {
-  kind: 'primitive' | 'extrude' | 'loopcut' | 'inset';
+  kind: 'primitive' | 'extrude' | 'loopcut' | 'inset' | 'subdivide';
   title: string;
   /** For primitives: the type, so the panel knows which parameters to show. */
   primitive?: PrimitiveType;
@@ -42,6 +42,11 @@ export const pickOp = signal<PickOp>('replace');
 export const activeId = signal<string | null>(null);
 export const selectedIds = signal<ReadonlySet<string>>(new Set());
 export const constraint = signal<Constraint | null>(null);
+/**
+ * An X/Y/Z chip held down: a one-finger drag on the view then slides the selection along that
+ * axis. `prev` is the lock shown before the hold (restored after); `used` = a slide happened.
+ */
+export const axisHold: { axis: 0 | 1 | 2 | null; prev: Constraint | null; used: boolean } = { axis: null, prev: null, used: false };
 export const snapEnabled = signal(false);
 export const snapSettings = signal({ move: 0.25, rotateDeg: 15, scale: 0.1 });
 export const xray = signal(false);

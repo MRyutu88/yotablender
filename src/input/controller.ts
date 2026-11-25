@@ -2,8 +2,9 @@
 //
 //   Select tool     tap = select, hold = loupe (Edit Mode), drag = orbit
 //   Box / Lasso     drag = selection shape (orbit with the nav ball or two fingers)
-//   Move/Rot/Scale  drag anywhere = transform the selection (grab a gizmo handle to constrain);
-//                   with nothing selected, drag orbits
+//   Move/Rot/Scale  drag on the model = transform the selection (grab a gizmo handle to
+//                   constrain); drag on empty space (or with nothing selected) orbits
+//   X/Y/Z chip held drag anywhere = slide the selection along that axis
 //   Two fingers     pan + pinch zoom (always)
 //   2/3-finger tap  undo / redo
 
@@ -38,7 +39,7 @@ export class InputController implements GestureHandler {
   private painting = false;
 
   wantsHold(): boolean {
-    if (S.mode.value === 'paint') return false;
+    if (S.mode.value === 'paint' || S.axisHold.axis !== null) return false;
     return S.mode.value === 'edit' && !S.isTransformTool.value && S.tool.value === 'select';
   }
 
@@ -73,10 +74,21 @@ export class InputController implements GestureHandler {
       this.app.paintMove(p.x, p.y);
       return;
     }
+    const held = S.axisHold;
+    if (held.axis !== null && !held.used) {
+      // Holding an X/Y/Z chip: this finger slides the selection along that axis.
+      held.used = true;
+      if (this.app.beginAxisSlide(held.axis, start.x, start.y, held.prev)) {
+        this.drag = 'transform';
+        return;
+      }
+    }
     const t = S.tool.value;
     if (t === 'move' || t === 'rotate' || t === 'scale') {
+      // Transform only when the drag starts on the model (or a gizmo handle); a drag that starts
+      // on empty space orbits, so the view can be turned without leaving the tool.
       const hit = this.app.gizmoHit(start.x, start.y);
-      if (this.app.beginTransform(t as TransformKind, start.x, start.y, hit)) {
+      if (this.app.dragTransforms(start.x, start.y, hit) && this.app.beginTransform(t as TransformKind, start.x, start.y, hit)) {
         this.drag = 'transform';
         S.haptic(6);
         return;

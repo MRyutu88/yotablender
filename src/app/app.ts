@@ -26,6 +26,8 @@ import {
   mergeByDistance,
   loopCut as loopCutOp,
   inset as insetOp,
+  subdivide as subdivideOp,
+  type SubdivideAxis,
   selectLinked as selectLinkedOp,
   selectLoop as selectLoopOp,
   selectRing as selectRingOp,
@@ -851,6 +853,28 @@ export class App implements SceneHost {
     };
   }
 
+  /**
+   * Subdivide (real geometry, not the modifier): the selected faces, or the whole mesh when no
+   * face is selected. Adjust Last: number of cuts and direction (all edges, or only edges along
+   * local X/Y/Z, e.g. Z = horizontal slices around a cube).
+   */
+  subdivide(cuts = 1, axis: SubdivideAxis = -1, faces?: number[] | null): void {
+    const o = this.editObject();
+    if (!o) return;
+    const target = faces !== undefined ? faces : o.editSelection.faces.size ? [...o.editSelection.faces] : null;
+    const cmd = this.runOp('Subdivide', (obj) => subdivideOp(obj.mesh, target, cuts, axis));
+    if (!cmd) return;
+    this.lastSubdivFaces = target;
+    S.adjustLast.value = {
+      kind: 'subdivide',
+      title: target ? 'Subdivide' : 'Subdivide (whole mesh)',
+      values: { cuts, axis },
+      specs: { cuts: { min: 1, max: 16, step: 1, int: true, label: 'Cuts' } },
+    };
+  }
+
+  private lastSubdivFaces: number[] | null = null;
+
   /** Inset the selected faces. Adjust Last: thickness and depth. */
   inset(thickness?: number, depth = 0): void {
     const o = this.editObject();
@@ -892,6 +916,9 @@ export class App implements SceneHost {
     if (a.kind === 'loopcut' && this.lastLoopEdge) {
       this.history.undo();
       this.loopCut(values.cuts, values.factor, this.lastLoopEdge);
+    } else if (a.kind === 'subdivide') {
+      this.history.undo();
+      this.subdivide(values.cuts, values.axis as SubdivideAxis, this.lastSubdivFaces);
     } else if (a.kind === 'inset') {
       this.history.undo();
       this.inset(values.thickness, values.depth);
@@ -1524,16 +1551,50 @@ export class App implements SceneHost {
     return c;
   }
 
+  /**
+   * Starts sliding the selection along one axis (finger on an X/Y/Z chip, or a drag on the view
+   * while a chip is held): Move/Rotate/Scale follow the active tool, any other tool moves.
+   * Right/up = positive. `prev` = the lock shown before (Scale keeps a matching plane lock).
+   */
+  beginAxisSlide(axis: 0 | 1 | 2, x: number, y: number, prev: S.Constraint | null): boolean {
+    const t = S.tool.value;
+    const kind: TransformKind = t === 'rotate' || t === 'scale' ? t : 'move';
+    const constraint: S.Constraint = kind === 'scale' && prev?.kind === 'plane' && prev.axis === axis ? prev : { kind: 'axis', axis };
+    if (!this.beginTransform(kind, x, y, null, { constraint, scrub: true })) {
+      S.toast('Select something first', 'error');
+      return false;
+    }
+    S.constraint.value = constraint;
+    S.haptic(6);
+    return true;
+  }
+
+  /** Whether a transform tool's drag from (x, y) should transform (vs. orbit the view). */
+  dragTransforms(x: number, y: number, hit: GizmoHit | null): boolean {
+    if (hit || this.extrudeFollow) return true; // gizmo handle, or "drag anywhere to extrude"
+    return this.touchesGeometry(x, y);
+  }
+
+  /** Whether (x, y) is on an object (Object Mode) or on the edited mesh / near its elements. */
+  touchesGeometry(x: number, y: number): boolean {
+    const o = this.editObject();
+    if (!o) return pickObject(this.vp, this.project.objects, this.evals, x, y) !== null;
+    if (pickObject(this.vp, [o], this.evals, x, y)) return true;
+    const cage = projectCage(this.vp, o, S.xray.value);
+    return !!(pickElement(o, cage, 'vert', x, y, 28) || pickElement(o, cage, 'edge', x, y, 20) || pickElement(o, cage, 'face', x, y, 0));
+  }
+
   gizmoHit(x: number, y: number): GizmoHit | null {
     if (!S.isTransformTool.value) return null;
     return this.vp.gizmo.hitTest(this.vp.cam, x, y);
   }
 
   /** Starts a transform; returns false when there is nothing to transform. */
-  beginTransform(kind: TransformKind, x: number, y: number, hit: GizmoHit | null): boolean {
+  beginTransform(kind: TransformKind, x: number, y: number, hit: GizmoHit | null, opts: { constraint?: S.Constraint; scrub?: boolean } = {}): boolean {
     const pivot = this.pivot();
     if (!pivot) return false;
-    let c = S.constraint.value;
+    const scrub = !!opts.scrub;
+    let c = opts.constraint ?? S.constraint.value;
     if (hit) {
       if (hit.kind === 'axis' || hit.kind === 'ring') c = { kind: 'axis', axis: hit.axis };
       else if (hit.kind === 'plane') c = { kind: 'plane', axis: hit.axis };
@@ -1545,12 +1606,12 @@ export class App implements SceneHost {
     const o = this.editObject();
     if (o) {
       const t = makeEditTarget(o, [...o.editSelection.verts], S.propEnabled.value ? S.propRadius.value : null);
-      this.session = new TransformSession(kind, this.vp.cam, { x, y }, c, { edit: t }, pivot, snap);
+      this.session = new TransformSession(kind, this.vp.cam, { x, y }, c, { edit: t }, pivot, snap, scrub);
       this.sessionRecord = null;
     } else {
       const objs = this.selectedObjects();
       this.sessionRecord = beginRecord(this, { ids: objs.map((ob) => ob.id), meshes: false });
-      this.session = new TransformSession(kind, this.vp.cam, { x, y }, c, { objects: objs }, pivot, snap);
+      this.session = new TransformSession(kind, this.vp.cam, { x, y }, c, { objects: objs }, pivot, snap, scrub);
     }
     S.transforming.value = true;
     S.hint.value = null;

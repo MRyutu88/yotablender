@@ -193,6 +193,12 @@ input {
   color: var(--accent-ink);
   border-color: transparent;
 }
+.chip.axis {
+  touch-action: none; /* sliding along a chip transforms along its axis */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
 .chip.axis-x {
   color: var(--x);
 }
@@ -525,6 +531,20 @@ input {
 }
 .stepper .btn {
   background: rgba(255, 255, 255, 0.06);
+}
+.adjust-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.adjust-row > span {
+  flex: 1;
+  font-size: 13px;
+  color: var(--muted);
+}
+.adjust-row .seg {
+  min-width: 40px;
+  padding: 0 8px;
 }
 
 .numfield {

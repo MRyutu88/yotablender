@@ -114,6 +114,23 @@ function AdjustLastPanel({ app }: { app: App }) {
     ));
   } else if (a.kind === 'extrude') {
     body = [<Stepper key="o" label="Offset" value={a.values.offset} min={-100} max={100} step={0.05} onChange={(v) => app.setExtrudeOffset(v)} />];
+  } else if (a.kind === 'subdivide') {
+    body = [
+      <Stepper key="c" label="Cuts" value={a.values.cuts} min={1} max={16} step={1} int onChange={(v) => app.adjustOp({ ...a.values, cuts: v })} />,
+      <div key="d" class="adjust-row">
+        <span>Direction</span>
+        <Segmented
+          value={String(a.values.axis)}
+          onChange={(v) => app.adjustOp({ ...a.values, axis: Number(v) })}
+          options={[
+            { value: '-1', label: 'All', title: 'Cut every edge (even grid)' },
+            { value: '0', label: 'X', title: 'Cut only edges along X' },
+            { value: '1', label: 'Y', title: 'Cut only edges along Y' },
+            { value: '2', label: 'Z', title: 'Cut only edges along Z (horizontal slices)' },
+          ]}
+        />
+      </div>,
+    ];
   } else if (a.specs) {
     body = Object.entries(a.specs).map(([k, spec]) => (
       <Stepper
@@ -403,6 +420,45 @@ function BottomBars({ app }: { app: App }) {
     else S.constraint.value = c?.kind === 'axis' && c.axis === axis ? null : { kind: 'axis', axis };
     S.haptic(6);
   };
+  // X/Y/Z chips: slide a finger on a chip (right/left or up/down), or hold the chip and drag
+  // on the view with another finger, to move the selection along that axis (rotate/scale with
+  // those tools). A tap still toggles the lock. The lock lights up while sliding.
+  const scrub = useRef<{ id: number; axis: 0 | 1 | 2; x0: number; y0: number; active: boolean } | null>(null);
+  const eatClick = useRef(false);
+  const chipDown = (axis: 0 | 1 | 2) => (e: PointerEvent) => {
+    eatClick.current = false;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
+    scrub.current = { id: e.pointerId, axis, x0: e.clientX, y0: e.clientY, active: false };
+    Object.assign(S.axisHold, { axis, prev: S.constraint.value, used: false });
+  };
+  const chipMove = (e: PointerEvent) => {
+    const s = scrub.current;
+    if (!s || s.id !== e.pointerId || (S.axisHold.used && !s.active)) return;
+    if (!s.active) {
+      if (Math.hypot(e.clientX - s.x0, e.clientY - s.y0) < 6) return;
+      S.axisHold.used = true;
+      if (!app.beginAxisSlide(s.axis, s.x0, s.y0, S.axisHold.prev)) return;
+      s.active = true;
+    }
+    app.updateTransform(e.clientX, e.clientY, e.shiftKey);
+  };
+  const chipUp = (cancelled: boolean) => (e: PointerEvent) => {
+    const s = scrub.current;
+    if (!s || s.id !== e.pointerId) return;
+    scrub.current = null;
+    const held = { ...S.axisHold };
+    Object.assign(S.axisHold, { axis: null, prev: null, used: false });
+    if (s.active) app.endTransform(cancelled);
+    if (held.used) {
+      eatClick.current = true; // it was a slide, not a tap
+      S.constraint.value = held.prev; // the running slide keeps its own axis
+    }
+  };
   return (
     <div class="bottom">
       {edit && isT && S.propEnabled.value && <PropBar app={app} />}
@@ -429,8 +485,7 @@ function BottomBars({ app }: { app: App }) {
           />
         )}
         <div class="spacer" />
-        {isT && (
-          <>
+        <>
             {c?.kind === 'dir' && (
               <button class="chip active" aria-label={`Constrained to ${c.label}; tap to free`} onClick={() => (S.constraint.value = null)}>
                 {c.label}
@@ -444,14 +499,25 @@ function BottomBars({ app }: { app: App }) {
                 <button
                   key={a}
                   class={`chip axis axis-${a.toLowerCase()} ${on ? 'active' : ''} ${plane ? 'plane' : ''}`}
-                  aria-label={`${plane ? 'Plane without' : 'Lock to'} ${a}`}
-                  onClick={() => axisChip(i as 0 | 1 | 2)}
+                  aria-label={`${plane ? 'Plane without' : 'Lock to'} ${a}; slide to transform along ${a}`}
+                  onPointerDown={chipDown(i as 0 | 1 | 2)}
+                  onPointerMove={chipMove}
+                  onPointerUp={chipUp(false)}
+                  onPointerCancel={chipUp(true)}
+                  onContextMenu={(e) => e.preventDefault()}
+                  onClick={() => {
+                    if (eatClick.current) {
+                      eatClick.current = false;
+                      return;
+                    }
+                    axisChip(i as 0 | 1 | 2);
+                  }}
                 >
                   {plane ? `⊥${a}` : a}
                 </button>
               );
             })}
-            {edit && (
+            {isT && edit && (
               <button
                 class={`chip ${S.propEnabled.value ? 'active' : ''}`}
                 aria-pressed={S.propEnabled.value}
@@ -461,16 +527,17 @@ function BottomBars({ app }: { app: App }) {
                 {Icon.falloff({ size: 18 })}
               </button>
             )}
-            <button
-              class={`chip ${S.snapEnabled.value ? 'active' : ''}`}
-              aria-pressed={S.snapEnabled.value}
-              aria-label="Snap to increments"
-              onClick={() => (S.snapEnabled.value = !S.snapEnabled.value)}
-            >
-              {Icon.magnet({ size: 18 })}
-            </button>
+            {isT && (
+              <button
+                class={`chip ${S.snapEnabled.value ? 'active' : ''}`}
+                aria-pressed={S.snapEnabled.value}
+                aria-label="Snap to increments"
+                onClick={() => (S.snapEnabled.value = !S.snapEnabled.value)}
+              >
+                {Icon.magnet({ size: 18 })}
+              </button>
+            )}
           </>
-        )}
       </div>
       <nav class="actions" aria-label="Actions">
         {edit ? (
@@ -478,6 +545,7 @@ function BottomBars({ app }: { app: App }) {
             <IconButton icon={Icon.extrude()} label="Extrude" onClick={() => app.extrude()} />
             <IconButton icon={Icon.inset()} label="Inset" onClick={() => app.inset()} />
             <IconButton icon={Icon.loopcut()} label="Loop Cut" onClick={() => app.loopCut()} />
+            <IconButton icon={Icon.subdivide()} label="Subdivide" onClick={() => app.subdivide()} />
             <IconButton icon={Icon.select()} label="Select" active={S.popover.value === 'select'} onClick={() => (S.popover.value = S.popover.value ? null : 'select')} />
             <IconButton icon={Icon.merge()} label="Merge" onClick={() => app.mergeCenter()} />
             <IconButton icon={Icon.mergeDist()} label="By dist." onClick={() => app.mergeDistance()} />
