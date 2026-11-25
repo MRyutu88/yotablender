@@ -9,7 +9,6 @@ import { MaterialsSheet } from './materials';
 import { hexToLinear, linearToHex, SWATCHES } from './color';
 import { PRIMITIVE_PARAM_SPECS, type PrimitiveType } from '../core/primitives/primitives';
 import type { ViewName } from '../render/camera';
-import type { TransformKind } from '../app/transform';
 
 export function Ui({ app, installPrompt }: { app: App; installPrompt: (() => void) | null }) {
   void S.sceneRev.value;
@@ -421,9 +420,10 @@ function BottomBars({ app }: { app: App }) {
     else S.constraint.value = c?.kind === 'axis' && c.axis === axis ? null : { kind: 'axis', axis };
     S.haptic(6);
   };
-  // Sliding a finger along an X/Y/Z chip moves/rotates/scales the selection along that axis
-  // (a tap still toggles the lock). The lock is shown while sliding and restored afterwards.
-  const scrub = useRef<{ id: number; axis: 0 | 1 | 2; x0: number; y0: number; active: boolean; prev: S.Constraint | null } | null>(null);
+  // X/Y/Z chips: slide a finger on a chip (right/left or up/down), or hold the chip and drag
+  // on the view with another finger, to move the selection along that axis (rotate/scale with
+  // those tools). A tap still toggles the lock. The lock lights up while sliding.
+  const scrub = useRef<{ id: number; axis: 0 | 1 | 2; x0: number; y0: number; active: boolean } | null>(null);
   const eatClick = useRef(false);
   const chipDown = (axis: 0 | 1 | 2) => (e: PointerEvent) => {
     eatClick.current = false;
@@ -433,25 +433,17 @@ function BottomBars({ app }: { app: App }) {
     } catch {
       /* ignore */
     }
-    scrub.current = { id: e.pointerId, axis, x0: e.clientX, y0: e.clientY, active: false, prev: S.constraint.value };
+    scrub.current = { id: e.pointerId, axis, x0: e.clientX, y0: e.clientY, active: false };
+    Object.assign(S.axisHold, { axis, prev: S.constraint.value, used: false });
   };
   const chipMove = (e: PointerEvent) => {
     const s = scrub.current;
-    if (!s || s.id !== e.pointerId) return;
+    if (!s || s.id !== e.pointerId || (S.axisHold.used && !s.active)) return;
     if (!s.active) {
-      if (Math.hypot(e.clientX - s.x0, e.clientY - s.y0) < 8) return;
-      const kind = S.tool.value as TransformKind;
-      // Scale keeps a "not this axis" plane lock if that is what the chip shows.
-      const constraint: S.Constraint = kind === 'scale' && s.prev?.kind === 'plane' && s.prev.axis === s.axis ? s.prev : { kind: 'axis', axis: s.axis };
-      if (!app.beginTransform(kind, s.x0, s.y0, null, { constraint, scrub: true })) {
-        scrub.current = null;
-        eatClick.current = true;
-        S.toast('Select something first', 'error');
-        return;
-      }
+      if (Math.hypot(e.clientX - s.x0, e.clientY - s.y0) < 6) return;
+      S.axisHold.used = true;
+      if (!app.beginAxisSlide(s.axis, s.x0, s.y0, S.axisHold.prev)) return;
       s.active = true;
-      S.constraint.value = constraint;
-      S.haptic(6);
     }
     app.updateTransform(e.clientX, e.clientY, e.shiftKey);
   };
@@ -459,10 +451,13 @@ function BottomBars({ app }: { app: App }) {
     const s = scrub.current;
     if (!s || s.id !== e.pointerId) return;
     scrub.current = null;
-    if (!s.active) return; // a tap: onClick toggles the lock
-    eatClick.current = true;
-    app.endTransform(cancelled);
-    S.constraint.value = s.prev;
+    const held = { ...S.axisHold };
+    Object.assign(S.axisHold, { axis: null, prev: null, used: false });
+    if (s.active) app.endTransform(cancelled);
+    if (held.used) {
+      eatClick.current = true; // it was a slide, not a tap
+      S.constraint.value = held.prev; // the running slide keeps its own axis
+    }
   };
   return (
     <div class="bottom">
@@ -490,8 +485,7 @@ function BottomBars({ app }: { app: App }) {
           />
         )}
         <div class="spacer" />
-        {isT && (
-          <>
+        <>
             {c?.kind === 'dir' && (
               <button class="chip active" aria-label={`Constrained to ${c.label}; tap to free`} onClick={() => (S.constraint.value = null)}>
                 {c.label}
@@ -510,6 +504,7 @@ function BottomBars({ app }: { app: App }) {
                   onPointerMove={chipMove}
                   onPointerUp={chipUp(false)}
                   onPointerCancel={chipUp(true)}
+                  onContextMenu={(e) => e.preventDefault()}
                   onClick={() => {
                     if (eatClick.current) {
                       eatClick.current = false;
@@ -522,7 +517,7 @@ function BottomBars({ app }: { app: App }) {
                 </button>
               );
             })}
-            {edit && (
+            {isT && edit && (
               <button
                 class={`chip ${S.propEnabled.value ? 'active' : ''}`}
                 aria-pressed={S.propEnabled.value}
@@ -532,16 +527,17 @@ function BottomBars({ app }: { app: App }) {
                 {Icon.falloff({ size: 18 })}
               </button>
             )}
-            <button
-              class={`chip ${S.snapEnabled.value ? 'active' : ''}`}
-              aria-pressed={S.snapEnabled.value}
-              aria-label="Snap to increments"
-              onClick={() => (S.snapEnabled.value = !S.snapEnabled.value)}
-            >
-              {Icon.magnet({ size: 18 })}
-            </button>
+            {isT && (
+              <button
+                class={`chip ${S.snapEnabled.value ? 'active' : ''}`}
+                aria-pressed={S.snapEnabled.value}
+                aria-label="Snap to increments"
+                onClick={() => (S.snapEnabled.value = !S.snapEnabled.value)}
+              >
+                {Icon.magnet({ size: 18 })}
+              </button>
+            )}
           </>
-        )}
       </div>
       <nav class="actions" aria-label="Actions">
         {edit ? (

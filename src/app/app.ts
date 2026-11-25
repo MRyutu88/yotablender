@@ -1551,6 +1551,24 @@ export class App implements SceneHost {
     return c;
   }
 
+  /**
+   * Starts sliding the selection along one axis (finger on an X/Y/Z chip, or a drag on the view
+   * while a chip is held): Move/Rotate/Scale follow the active tool, any other tool moves.
+   * Right/up = positive. `prev` = the lock shown before (Scale keeps a matching plane lock).
+   */
+  beginAxisSlide(axis: 0 | 1 | 2, x: number, y: number, prev: S.Constraint | null): boolean {
+    const t = S.tool.value;
+    const kind: TransformKind = t === 'rotate' || t === 'scale' ? t : 'move';
+    const constraint: S.Constraint = kind === 'scale' && prev?.kind === 'plane' && prev.axis === axis ? prev : { kind: 'axis', axis };
+    if (!this.beginTransform(kind, x, y, null, { constraint, scrub: true })) {
+      S.toast('Select something first', 'error');
+      return false;
+    }
+    S.constraint.value = constraint;
+    S.haptic(6);
+    return true;
+  }
+
   /** Whether a transform tool's drag from (x, y) should transform (vs. orbit the view). */
   dragTransforms(x: number, y: number, hit: GizmoHit | null): boolean {
     if (hit || this.extrudeFollow) return true; // gizmo handle, or "drag anywhere to extrude"
