@@ -70,6 +70,7 @@ export const Icon = {
   flat: (p?: P) => I([<path d="M3 17l5-7h8l5 7" />], p),
   download: (p?: P) => I([<path d="M12 4v11M8 11l4 4 4-4M5 20h14" />], p),
   check: (p?: P) => I([<path d="m5 12 5 5 9-10" />], p),
+  symmetry: (p?: P) => I([<path d="M12 3v18" stroke-dasharray="2.5 2.5" />, <path d="M9 7 3 17h6zM15 7l6 10h-6z" />], p),
   falloff: (p?: P) => I([<circle cx="12" cy="12" r="9" stroke-dasharray="2.5 2.5" />, <circle cx="12" cy="12" r="4.5" />, <circle cx="12" cy="12" r="1" fill="currentColor" />], p),
   loopcut: (p?: P) => I([<rect x="4" y="4" width="16" height="16" rx="2" />, <path d="M12 4v16" stroke-dasharray="2.5 2" />], p),
   subdivide: (p?: P) => I([<rect x="4" y="4" width="16" height="16" rx="2" />, <path d="M12 4v16M4 12h16" stroke-dasharray="2.5 2" />], p),

@@ -29,6 +29,7 @@ export function Ui({ app, installPrompt }: { app: App; installPrompt: (() => voi
       {sheet === 'materials' && <MaterialsSheet app={app} />}
       {sheet === 'texture' && <TextureSheet app={app} />}
       <SelectPopover app={app} />
+      <SymmetryPopover app={app} />
       <Marquee />
       <PropCircle />
       <BrushCursor />
@@ -411,6 +412,8 @@ function BottomBars({ app }: { app: App }) {
     if (S.tool.value !== 'move') S.hint.value = null;
   };
   const c = S.constraint.value;
+  void S.sceneRev.value;
+  const sym = edit ? app.symmetryAxes() : [false, false, false];
   const lastTap = useRef<{ axis: number; t: number }>({ axis: -1, t: 0 });
   const axisChip = (axis: 0 | 1 | 2) => {
     const now = performance.now();
@@ -517,6 +520,16 @@ function BottomBars({ app }: { app: App }) {
                 </button>
               );
             })}
+            {edit && sym.some(Boolean) && (
+              <button
+                class="chip active"
+                aria-label={`Live symmetry on ${sym.map((on, i) => (on ? 'XYZ'[i] : '')).join('')}; tap for symmetry options`}
+                onClick={() => (S.popover.value = S.popover.value === 'symmetry' ? null : 'symmetry')}
+              >
+                {Icon.symmetry({ size: 18 })}
+                {sym.map((on, i) => (on ? 'XYZ'[i] : '')).join('')}
+              </button>
+            )}
             {isT && edit && (
               <button
                 class={`chip ${S.propEnabled.value ? 'active' : ''}`}
@@ -549,6 +562,7 @@ function BottomBars({ app }: { app: App }) {
             <IconButton icon={Icon.select()} label="Select" active={S.popover.value === 'select'} onClick={() => (S.popover.value = S.popover.value ? null : 'select')} />
             <IconButton icon={Icon.merge()} label="Merge" onClick={() => app.mergeCenter()} />
             <IconButton icon={Icon.mergeDist()} label="By dist." onClick={() => app.mergeDistance()} />
+            <IconButton icon={Icon.symmetry()} label="Symmetry" active={S.popover.value === 'symmetry'} onClick={() => (S.popover.value = S.popover.value === 'symmetry' ? null : 'symmetry')} />
             <IconButton icon={Icon.trash()} label="Delete" onClick={() => app.deleteElements()} />
             <IconButton icon={Icon.palette()} label="Material" active={S.sheet.value === 'materials'} onClick={() => toggleSheet('materials')} />
             <IconButton icon={Icon.wrench()} label="Modifiers" active={S.sheet.value === 'modifiers'} onClick={() => toggleSheet('modifiers')} />
@@ -630,6 +644,67 @@ function SelectPopover({ app }: { app: App }) {
       <IconButton icon={Icon.loop()} label="Loop" onClick={run(() => app.selectSpecial('loop'))} />
       <IconButton icon={Icon.ring()} label="Ring" onClick={run(() => app.selectSpecial('ring'))} />
       <p class="note">Tip: double-tap an edge for its loop, a vertex or face for the whole piece.</p>
+    </div>
+  );
+}
+
+function SymmetryPopover({ app }: { app: App }) {
+  if (S.popover.value !== 'symmetry' || S.mode.value !== 'edit') return null;
+  void S.sceneRev.value; // re-render when the object's settings change (undo, toggles)
+  const sym = app.symmetryAxes();
+  const d = S.symmetrizeDir.value;
+  const a = 'XYZ'[d.axis];
+  return (
+    <div class="popover sym" role="dialog" aria-label="Symmetry">
+      <div class="sym-row">
+        <span class="sym-label">Live symmetry</span>
+        <div class="sym-axes">
+          {(['X', 'Y', 'Z'] as const).map((n, i) => (
+            <button
+              key={n}
+              class={`chip axis axis-${n.toLowerCase()} ${sym[i] ? 'active' : ''}`}
+              aria-pressed={sym[i]}
+              aria-label={`Mirror edits across ${n}`}
+              onClick={() => app.toggleSymmetry(i as 0 | 1 | 2)}
+            >
+              {n}
+            </button>
+          ))}
+        </div>
+      </div>
+      <p class="note">Moving a vertex moves its mirror image across the object's local axis too.</p>
+      <div class="sym-sep" />
+      <div class="sym-row">
+        <span class="sym-label">Symmetrize</span>
+        <Segmented
+          value={String(d.axis)}
+          onChange={(v) => (S.symmetrizeDir.value = { ...d, axis: Number(v) as 0 | 1 | 2 })}
+          options={[
+            { value: '0', label: 'X' },
+            { value: '1', label: 'Y' },
+            { value: '2', label: 'Z' },
+          ]}
+        />
+      </div>
+      <Segmented
+        class="sym-dir"
+        value={d.fromPositive ? '+' : '-'}
+        onChange={(v) => (S.symmetrizeDir.value = { ...d, fromPositive: v === '+' })}
+        options={[
+          { value: '+', label: `+${a} → −${a}`, title: `Copy the +${a} side onto the −${a} side` },
+          { value: '-', label: `−${a} → +${a}`, title: `Copy the −${a} side onto the +${a} side` },
+        ]}
+      />
+      <button
+        class="btn wide"
+        onClick={() => {
+          app.symmetrize(d.axis, d.fromPositive);
+          S.popover.value = null;
+        }}
+      >
+        {Icon.symmetry({ size: 20 })}
+        <span class="btn-label">Symmetrize</span>
+      </button>
     </div>
   );
 }

@@ -148,6 +148,10 @@ def _build_object(o, materials, collection):
         layer.uv.foreach_set("vector", [c for uv in uvl["data"] for c in uv])
         has_uvs = True
 
+    mirror = o.get("use_mirror") or []
+    for axis, on in zip("xyz", mirror):
+        setattr(me, "use_mirror_" + axis, bool(on))
+
     if o.get("shade_smooth"):
         me.shade_smooth()
     else:
