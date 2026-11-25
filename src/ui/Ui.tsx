@@ -4,7 +4,7 @@ import type { App } from '../app/app';
 import * as S from '../app/state';
 import { Icon } from './icons';
 import { IconButton, Segmented, Stepper } from './widgets';
-import { AddSheet, HelpSheet, ItemSheet, MenuSheet, ModifiersSheet, OutlinerSheet } from './sheets';
+import { AddSheet, HelpSheet, ItemSheet, MenuSheet, ModifiersSheet, OutlinerSheet, TextureSheet } from './sheets';
 import { MaterialsSheet } from './materials';
 import { hexToLinear, linearToHex, SWATCHES } from './color';
 import { PRIMITIVE_PARAM_SPECS, type PrimitiveType } from '../core/primitives/primitives';
@@ -27,6 +27,7 @@ export function Ui({ app, installPrompt }: { app: App; installPrompt: (() => voi
       {sheet === 'menu' && <MenuSheet app={app} installPrompt={installPrompt} />}
       {sheet === 'help' && <HelpSheet />}
       {sheet === 'materials' && <MaterialsSheet app={app} />}
+      {sheet === 'texture' && <TextureSheet app={app} />}
       <SelectPopover app={app} />
       <Marquee />
       <PropCircle />
@@ -59,7 +60,7 @@ function TopBar({ app }: { app: App }) {
           { value: 'vert', icon: Icon.vert(), title: 'Edit Mode: vertices' },
           { value: 'edge', icon: Icon.edge(), title: 'Edit Mode: edges' },
           { value: 'face', icon: Icon.face(), title: 'Edit Mode: faces' },
-          { value: 'paint', icon: Icon.brush(), title: 'Vertex Paint' },
+          { value: 'paint', icon: Icon.brush(), title: 'Paint (vertex colors or texture)' },
         ]}
       />
       <div class="spacer" />
@@ -263,8 +264,9 @@ function NavBall({ app }: { app: App }) {
   );
 }
 
-/** Vertex Paint: brush size/strength, colors, and the paint tools. */
+/** Paint mode: Vertex Paint (the "Color" attribute) or Texture Paint (the object's paint texture). */
 function PaintBars({ app }: { app: App }) {
+  void S.sceneRev.value; // re-render when the object gains/loses its texture (undo too)
   const [r, g, b] = S.brushColor.value;
   const hex = linearToHex([r, g, b]);
   const setHex = (h: string, remember: boolean) => {
@@ -272,37 +274,101 @@ function PaintBars({ app }: { app: App }) {
     if (remember) S.recentColors.value = [h, ...S.recentColors.value.filter((x) => x !== h)].slice(0, 6);
   };
   const t = S.paintTool.value;
+  const tex = S.paintTarget.value === 'texture';
+  const ready = !tex || app.hasPaintTexture();
   const swatches = [...S.recentColors.value, ...SWATCHES.filter((s) => !S.recentColors.value.includes(s))].slice(0, 10);
   return (
     <div class="bottom">
       <div class="paintbar">
-        <label class="slider">
-          <span class="field-label">Size</span>
-          <input type="range" min={6} max={160} step={1} value={S.brushRadius.value} onInput={(e) => (S.brushRadius.value = Number((e.target as HTMLInputElement).value))} />
-          <b>{S.brushRadius.value}</b>
-        </label>
-        <label class="slider">
-          <span class="field-label">Strength</span>
-          <input type="range" min={0.02} max={1} step={0.01} value={S.brushStrength.value} onInput={(e) => (S.brushStrength.value = Number((e.target as HTMLInputElement).value))} />
-          <b>{S.brushStrength.value.toFixed(2)}</b>
-        </label>
+        <div class="paint-target">
+          <Segmented
+            value={S.paintTarget.value}
+            onChange={(v) => app.setPaintTarget(v)}
+            options={[
+              { value: 'vertex', label: 'Vertex', title: 'Vertex Paint (Color attribute)' },
+              { value: 'texture', label: 'Texture', title: 'Texture Paint (UV texture)' },
+            ]}
+          />
+          {tex && ready && <IconButton icon={Icon.dots()} title="Texture options" active={S.sheet.value === 'texture'} onClick={() => toggleSheet('texture')} />}
+        </div>
+        {ready && (
+          <>
+            <label class="slider">
+              <span class="field-label">Size</span>
+              <input type="range" min={4} max={160} step={1} value={S.brushRadius.value} onInput={(e) => (S.brushRadius.value = Number((e.target as HTMLInputElement).value))} />
+              <b>{S.brushRadius.value}</b>
+            </label>
+            <label class="slider">
+              <span class="field-label">Strength</span>
+              <input type="range" min={0.02} max={1} step={0.01} value={S.brushStrength.value} onInput={(e) => (S.brushStrength.value = Number((e.target as HTMLInputElement).value))} />
+              <b>{S.brushStrength.value.toFixed(2)}</b>
+            </label>
+            {tex && (
+              <label class="slider">
+                <span class="field-label">Hardness</span>
+                <input type="range" min={0} max={1} step={0.01} value={S.brushHardness.value} onInput={(e) => (S.brushHardness.value = Number((e.target as HTMLInputElement).value))} />
+                <b>{S.brushHardness.value.toFixed(2)}</b>
+              </label>
+            )}
+          </>
+        )}
+        {!ready && <NewTextureCard app={app} />}
       </div>
-      <nav class="actions colors" aria-label="Colors">
-        <label class="brushcolor" aria-label="Brush color">
-          <input type="color" value={hex} onInput={(e) => setHex((e.target as HTMLInputElement).value, false)} onChange={(e) => setHex((e.target as HTMLInputElement).value, true)} />
-          <span class="swatch big" style={{ background: hex }} />
-        </label>
-        {swatches.map((h) => (
-          <button key={h} class={`swatch big ${h === hex ? 'on' : ''}`} aria-label={`Paint with ${h}`} style={{ background: h }} onClick={() => setHex(h, true)} />
-        ))}
-        <IconButton icon={Icon.fill()} label="Fill" onClick={() => app.fillColor()} />
-        <IconButton icon={Icon.palette()} label="Material" active={S.sheet.value === 'materials'} onClick={() => toggleSheet('materials')} />
-      </nav>
-      <nav class="tools" aria-label="Paint tools">
-        <IconButton icon={Icon.brush()} label="Draw" active={t === 'draw'} onClick={() => (S.paintTool.value = 'draw')} />
-        <IconButton icon={Icon.blur()} label="Blur" active={t === 'blur'} onClick={() => (S.paintTool.value = 'blur')} />
-        <IconButton icon={Icon.dropper()} label="Pick" active={t === 'pick'} onClick={() => (S.paintTool.value = 'pick')} />
-      </nav>
+      {ready && (
+        <>
+          <nav class="actions colors" aria-label="Colors">
+            <label class="brushcolor" aria-label="Brush color">
+              <input type="color" value={hex} onInput={(e) => setHex((e.target as HTMLInputElement).value, false)} onChange={(e) => setHex((e.target as HTMLInputElement).value, true)} />
+              <span class="swatch big" style={{ background: hex }} />
+            </label>
+            {swatches.map((h) => (
+              <button key={h} class={`swatch big ${h === hex ? 'on' : ''}`} aria-label={`Paint with ${h}`} style={{ background: h }} onClick={() => setHex(h, true)} />
+            ))}
+            <IconButton icon={Icon.fill()} label={tex && t === 'erase' ? 'Clear' : 'Fill'} onClick={() => (tex ? app.fillTexture() : app.fillColor())} />
+            <IconButton icon={Icon.palette()} label="Material" active={S.sheet.value === 'materials'} onClick={() => toggleSheet('materials')} />
+          </nav>
+          <nav class="tools" aria-label="Paint tools">
+            <IconButton icon={Icon.brush()} label="Draw" active={t === 'draw'} onClick={() => (S.paintTool.value = 'draw')} />
+            {tex ? (
+              <IconButton icon={Icon.eraser()} label="Erase" active={t === 'erase'} onClick={() => (S.paintTool.value = 'erase')} />
+            ) : (
+              <IconButton icon={Icon.blur()} label="Blur" active={t === 'blur'} onClick={() => (S.paintTool.value = 'blur')} />
+            )}
+            <IconButton icon={Icon.dropper()} label="Pick" active={t === 'pick'} onClick={() => (S.paintTool.value = 'pick')} />
+          </nav>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** Shown in Texture Paint until the object has UVs and a paint texture: one tap sets both up. */
+function NewTextureCard({ app }: { app: App }) {
+  const o = app.active;
+  const unwrapped = !!o?.mesh.uvs;
+  return (
+    <div class="newtexture">
+      <p>
+        {unwrapped ? 'Add a paint texture to ' : 'Unwrap '}
+        <b>{o?.name ?? 'the object'}</b>
+        {unwrapped ? '' : ' (automatic UVs) and add a paint texture'}. Paint goes on top of its colors.
+      </p>
+      <div class="row gap texsize">
+        <span class="field-label">Texture</span>
+        <Segmented
+          value={String(S.textureSize.value) as '512' | '1024' | '2048'}
+          onChange={(v) => (S.textureSize.value = Number(v))}
+          options={[
+            { value: '512', label: '512' },
+            { value: '1024', label: '1K' },
+            { value: '2048', label: '2K' },
+          ]}
+        />
+      </div>
+      <button class="btn wide" onClick={() => app.createPaintTexture()}>
+        {Icon.brush({ size: 20 })}
+        <span class="btn-label">{unwrapped ? 'Add paint texture' : 'Unwrap & add paint texture'}</span>
+      </button>
     </div>
   );
 }

@@ -5,11 +5,19 @@
 // - selected vertices not part of a selected edge: each gets a new wire edge.
 // The new geometry starts at the same place; the caller then moves it (along `normal` for faces).
 
-import { addFace, addVertex, cloneData, edgeFromKey, edgeKey, faceNormalRaw, unreferencedVertices, compactVertices, type Edge, type MeshData } from '../mesh';
+import { addFace, addVertex, cloneData, cornerUV, edgeFromKey, edgeKey, faceNormalRaw, unreferencedVertices, compactVertices, type Edge, type MeshData } from '../mesh';
 import { emptySelection, flushSelection, type Selection } from '../selection';
 import { checkResult, OpError, type OpResult } from './opResult';
 
-export function extrude(mesh: MeshData, sel: Selection): OpResult {
+export interface ExtrudeOptions {
+  /**
+   * UV of a duplicated corner (vertex `v` of region face `face`, input indices). Inset uses it
+   * to shrink the UVs along with the faces. Default: unchanged.
+   */
+  dupUV?: (face: number, v: number, uv: [number, number]) => [number, number];
+}
+
+export function extrude(mesh: MeshData, sel: Selection, opts: ExtrudeOptions = {}): OpResult {
   if (sel.verts.size === 0) throw new OpError('Nothing selected');
   const keepLoose = unreferencedVertices(mesh);
   const data = cloneData(mesh);
@@ -47,6 +55,15 @@ export function extrude(mesh: MeshData, sel: Selection): OpResult {
     const nl = Math.hypot(nx, ny, nz);
     normal = nl > 1e-12 ? [nx / nl, ny / nl, nz / nl] : [0, 0, 1];
 
+    // Face across each directed edge (for the UVs of the side walls' outer corners).
+    const across = new Map<string, number>();
+    mesh.faces.forEach((f, fi) => {
+      for (let i = 0; i < f.length; i++) across.set(`${f[(i + 1) % f.length]},${f[i]}`, fi);
+    });
+    const dupUV = (f: number, v: number): [number, number] => {
+      const uv = cornerUV(mesh, f, v) ?? [0, 0];
+      return opts.dupUV ? opts.dupUV(f, v, uv) : uv;
+    };
     for (const f of regionFaces) {
       const face = mesh.faces[f];
       for (let i = 0; i < face.length; i++) {
@@ -54,7 +71,16 @@ export function extrude(mesh: MeshData, sel: Selection): OpResult {
         coveredEdges.add(edgeKey(a, b));
         if (!directed.has(`${b},${a}`)) {
           // Outline edge a→b: side wall a, b, b', a' (keeps winding consistent with the neighbours).
-          addFace(data, [a, b, duplicate(b), duplicate(a)], f);
+          // UVs: the outer corners from the face outside the region (so the wall continues it),
+          // the inner ones from the region face: a stretched strip, like Blender's extrude.
+          let uv: number[] | undefined;
+          if (mesh.uvs) {
+            const out = across.get(`${a},${b}`);
+            const ua = (out !== undefined && cornerUV(mesh, out, a)) || cornerUV(mesh, f, a)!;
+            const ub = (out !== undefined && cornerUV(mesh, out, b)) || cornerUV(mesh, f, b)!;
+            uv = [...ua, ...ub, ...dupUV(f, b), ...dupUV(f, a)];
+          }
+          addFace(data, [a, b, duplicate(b), duplicate(a)], f, false, uv);
         }
       }
     }
@@ -62,6 +88,7 @@ export function extrude(mesh: MeshData, sel: Selection): OpResult {
     // duplicated too and their originals dropped by compaction below.
     for (const f of regionFaces) {
       data.faces[f] = mesh.faces[f].map((v) => duplicate(v));
+      if (data.uvs) data.uvs[f] = mesh.faces[f].flatMap((v) => dupUV(f, v));
     }
   }
 
@@ -93,7 +120,12 @@ export function extrude(mesh: MeshData, sel: Selection): OpResult {
     for (const [a, b] of oriented) {
       // [a, b, b', a'] runs a→b, opposite to the existing face's b→a.
       const like = matOf.get(`${a},${b}`);
-      addFace(data, [a, b, duplicate(b), duplicate(a)], like ?? 0, like === undefined);
+      let uv: number[] | undefined;
+      if (mesh.uvs && like !== undefined) {
+        const ua = cornerUV(mesh, like, a)!, ub = cornerUV(mesh, like, b)!;
+        uv = [...ua, ...ub, ...ub, ...ua];
+      }
+      addFace(data, [a, b, duplicate(b), duplicate(a)], like ?? 0, like === undefined, uv);
     }
     // A loose edge that now has a face is no longer loose.
     const used = new Set(lonelyEdges);

@@ -1,6 +1,8 @@
 import { defineConfig } from 'vitest/config';
 import { VitePWA } from 'vite-plugin-pwa';
 import { readFileSync } from 'node:fs';
+// @ts-expect-error plain .mjs helper shared with `npm run addon`
+import { addonVersion, buildAddonZip } from './scripts/addon-zip.mjs';
 
 const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as { version: string };
 const version = `${pkg.version} (${new Date().toISOString().slice(0, 10)})`;
@@ -14,6 +16,16 @@ export default defineConfig({
   server: { host: true, port: 5173 },
   build: { target: 'es2022', sourcemap: true, chunkSizeWarningLimit: 900 },
   plugins: [
+    {
+      // The Blender add-on, downloadable next to the app (not precached: it's for the PC).
+      name: 'yotablender-addon-zip',
+      apply: 'build',
+      generateBundle() {
+        const source = buildAddonZip() as Uint8Array;
+        this.emitFile({ type: 'asset', fileName: 'yotablender_import.zip', source });
+        this.emitFile({ type: 'asset', fileName: `yotablender_import-${addonVersion()}.zip`, source });
+      },
+    },
     VitePWA({
       registerType: 'prompt',
       injectRegister: false,

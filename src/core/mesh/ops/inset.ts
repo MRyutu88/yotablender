@@ -7,6 +7,7 @@ import { faceNormalRaw, type MeshData } from '../mesh';
 import type { Selection } from '../selection';
 import { extrude } from './extrude';
 import { checkResult, OpError, type OpResult } from './opResult';
+import { faceUVMap, type FaceUVMap } from '../../uv/faceMap';
 import type { Vec3 } from '../../math/vec3';
 
 export function inset(mesh: MeshData, sel: Selection, thickness = 0.1, depth = 0): OpResult {
@@ -35,22 +36,40 @@ export function inset(mesh: MeshData, sel: Selection, thickness = 0.1, depth = 0
     }
   }
 
-  const r = extrude(mesh, sel);
-  const out = r.data;
+  // Offset of every outline/inner vertex copy (input index → object-space offset).
   const avg = (vs: Vec3[]): Vec3 => norm(vs.reduce<Vec3>((acc, v) => [acc[0] + v[0], acc[1] + v[1], acc[2] + v[2]], [0, 0, 0]));
-  const regionNormal = r.normal ?? [0, 0, 1];
-  for (const { src, dup } of r.dupPairs ?? []) {
-    const dirs = inward.get(src);
-    const nn = normals.has(src) ? avg(normals.get(src)!) : regionNormal;
-    let offset: Vec3 = [0, 0, 0];
+  const slide = new Map<number, Vec3>(); // in-plane part (moves the UVs too)
+  const lift = new Map<number, Vec3>(); // along the normal (depth)
+  for (const v of normals.keys()) {
+    const dirs = inward.get(v);
     if (dirs) {
       // Outline vertex: slide inward, keeping a constant distance from both outline edges.
       const d = avg(dirs);
       const minDot = Math.min(...dirs.map((u) => d[0] * u[0] + d[1] * u[1] + d[2] * u[2]));
       const len = thickness / Math.max(minDot, 0.25);
-      offset = [d[0] * len, d[1] * len, d[2] * len];
+      slide.set(v, [d[0] * len, d[1] * len, d[2] * len]);
     }
-    for (let c = 0; c < 3; c++) out.positions[dup * 3 + c] += offset[c] + nn[c] * depth;
+    const nn = avg(normals.get(v)!);
+    lift.set(v, [nn[0] * depth, nn[1] * depth, nn[2] * depth]);
+  }
+
+  const maps = new Map<number, FaceUVMap>();
+  const r = extrude(mesh, sel, {
+    dupUV: (f, v, uv) => {
+      const o = slide.get(v);
+      if (!o || !mesh.uvs) return uv;
+      let m = maps.get(f);
+      if (!m) maps.set(f, (m = faceUVMap(pos, mesh.faces[f], mesh.uvs[f])));
+      const d = m.delta(o);
+      return [uv[0] + d[0], uv[1] + d[1]];
+    },
+  });
+  const out = r.data;
+  const regionNormal = r.normal ?? [0, 0, 1];
+  for (const { src, dup } of r.dupPairs ?? []) {
+    const o = slide.get(src) ?? [0, 0, 0];
+    const h = lift.get(src) ?? [regionNormal[0] * depth, regionNormal[1] * depth, regionNormal[2] * depth];
+    for (let c = 0; c < 3; c++) out.positions[dup * 3 + c] += o[c] + h[c];
   }
   checkResult(out, 'Inset');
   return { data: out, selection: r.selection, normal: r.normal };

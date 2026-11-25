@@ -4,8 +4,8 @@ Run inside Blender (Scripting tab: open this file and press Run, or exec() it vi
 It works in a temporary scene that is deleted afterwards, so your open file is untouched.
 
 Checks, per object: name, vertex count, face count, and the histogram of face sizes
-(3 = triangles, 4 = quads, 8 = the cylinder's n-gon caps…), plus one vertex position to
-confirm the Z-up/Y-up conversion and baked transforms.
+(3 = triangles, 4 = quads, 8 = the cylinder's n-gon caps…), per-face materials, vertex colors,
+UVs (`vt`), plus one vertex position to confirm the Z-up/Y-up conversion and baked transforms.
 """
 import bpy, json, os, re
 from collections import Counter
@@ -35,6 +35,7 @@ def import_and_count(path):
             "sizes": {str(k): v for k, v in sorted(sizes.items())},
             "materials": dict(mats),
             "colors": colors,
+            "uvs": len(me.uv_layers),
             "first_vertex_world": [round(c, 5) for c in (o.matrix_world @ me.vertices[0].co)],
         }
     return out, new
@@ -60,6 +61,7 @@ def run():
                         and g["sizes"] == exp["sizes"]
                         and g["materials"] == exp.get("materials", g["materials"])
                         and bool(g["colors"]) == exp.get("hasColors", bool(g["colors"]))
+                        and bool(g["uvs"]) == exp.get("hasUVs", bool(g["uvs"]))
                     )
                     report["ok"] &= ok
                     checks.append({"name": exp["name"], "ok": ok, "expected": exp, "got": g})

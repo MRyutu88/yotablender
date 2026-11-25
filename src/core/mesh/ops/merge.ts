@@ -86,14 +86,19 @@ function applyMerge(orig: MeshData, data: MeshData, map: Map<number, number>, wh
 
   const faces: number[][] = [];
   const mats: number[] = [];
+  const uvs: number[][] = [];
   data.faces.forEach((f, fi) => {
-    const g: number[] = [];
-    for (const v of f.map(m)) if (g[g.length - 1] !== v) g.push(v);
-    while (g.length > 1 && g[0] === g[g.length - 1]) g.pop();
+    // Corners that merge into their neighbour go, with their UVs.
+    const src = f.map(m);
+    const keep: number[] = [];
+    for (let i = 0; i < src.length; i++) if (keep.length === 0 || src[keep[keep.length - 1]] !== src[i]) keep.push(i);
+    while (keep.length > 1 && src[keep[0]] === src[keep[keep.length - 1]]) keep.pop();
+    const g = keep.map((i) => src[i]);
     if (g.length < 3) return; // collapsed to an edge or a point
     if (new Set(g).size !== g.length) return; // pinched face: drop it
     faces.push(g);
     mats.push(data.faceMats?.[fi] ?? 0);
+    if (data.uvs) uvs.push(keep.flatMap((i) => [data.uvs![fi][i * 2], data.uvs![fi][i * 2 + 1]]));
   });
   // Faces that now share the same vertices: same winding → keep one; opposite → both go.
   const bySet = new Map<string, number[]>();
@@ -114,6 +119,7 @@ function applyMerge(orig: MeshData, data: MeshData, map: Map<number, number>, wh
   }
   data.faces = faces.filter((_, i) => !drop.has(i));
   if (data.faceMats) data.faceMats = mats.filter((_, i) => !drop.has(i));
+  if (data.uvs) data.uvs = uvs.filter((_, i) => !drop.has(i));
 
   const faceEdges = new Set<number>();
   for (const f of data.faces) for (let i = 0; i < f.length; i++) faceEdges.add(edgeKey(f[i], f[(i + 1) % f.length]));

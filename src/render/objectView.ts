@@ -12,6 +12,15 @@ import type { SelectMode } from '../core/mesh/selection';
 import { allEdgeKeys, edgeFromKey, faceCenter } from '../core/mesh/mesh';
 import { triangulate } from '../core/subdiv/catmullClark';
 import { COLORS, makeOutlineMaterial } from './materials';
+import type { PaintSurface } from './texturePaint';
+
+/** Mixes the paint layer (sRGB, straight alpha) over the surface color in a built-in material. */
+const PAINT_CHUNK = /* glsl */ `#include <color_fragment>
+  {
+    vec4 paint = texture2D(paintMap, vUv);
+    vec3 lin = mix(paint.rgb / 12.92, pow((paint.rgb + 0.055) / 1.055, vec3(2.4)), step(0.04045, paint.rgb));
+    diffuseColor.rgb = mix(diffuseColor.rgb, lin, paint.a);
+  }`;
 
 const tmpColor = new THREE.Color();
 
@@ -38,6 +47,7 @@ export class ObjectView {
   private xray = false;
   private topoKey = -1;
   private colorKey = -1;
+  private paintUniform: { value: THREE.Texture | null } = { value: null };
 
   // Cage overlay (edit mode)
   private cage = new THREE.Group();
@@ -100,13 +110,16 @@ export class ObjectView {
     this.group.matrixWorldNeedsUpdate = true;
     this.group.visible = obj.visible;
     const g = this.surface.geometry;
+    // With UVs the surface is split at the seams (one UV per render vertex).
+    const src = ev.render ?? ev;
     if (ev.topoKey !== this.topoKey) {
       g.dispose();
       const ng = new THREE.BufferGeometry();
-      ng.setAttribute('position', new THREE.BufferAttribute(ev.positions, 3).setUsage(THREE.DynamicDrawUsage));
-      ng.setAttribute('normal', new THREE.BufferAttribute(ev.normals, 3).setUsage(THREE.DynamicDrawUsage));
-      if (ev.colors) ng.setAttribute('color', new THREE.BufferAttribute(ev.colors, 3).setUsage(THREE.DynamicDrawUsage));
-      ng.setIndex(new THREE.BufferAttribute(ev.tris, 1));
+      ng.setAttribute('position', new THREE.BufferAttribute(src.positions, 3).setUsage(THREE.DynamicDrawUsage));
+      ng.setAttribute('normal', new THREE.BufferAttribute(src.normals, 3).setUsage(THREE.DynamicDrawUsage));
+      if (src.colors) ng.setAttribute('color', new THREE.BufferAttribute(src.colors, 3).setUsage(THREE.DynamicDrawUsage));
+      if (ev.render) ng.setAttribute('uv', new THREE.BufferAttribute(ev.render.uv, 2));
+      ng.setIndex(new THREE.BufferAttribute(src.tris, 1));
       for (const gr of ev.groups) ng.addGroup(gr.start, gr.count, gr.slot);
       this.surface.geometry = ng;
       this.outline.geometry = ng;
@@ -124,9 +137,10 @@ export class ObjectView {
     // Materials: one per slot. With a color attribute the attribute is shown (like Blender's
     // Vertex Paint view); otherwise each slot's base color.
     const hasColors = !!ev.colors;
+    const hasPaint = !!this.paintUniform.value && !!ev.render;
     const maxSlot = Math.max(0, ...ev.groups.map((gr) => gr.slot));
     const looks = Array.from({ length: maxSlot + 1 }, (_, i) => slots[i] ?? slots[0] ?? { color: [0.8, 0.8, 0.8, 1], roughness: 0.5, metallic: 0 });
-    const key = JSON.stringify([shading, obj.shade_smooth, hasColors, this.xray, looks]);
+    const key = JSON.stringify([shading, obj.shade_smooth, hasColors, hasPaint, this.xray, looks]);
     if (key !== this.matKey) {
       this.matKey = key;
       for (const m of this.mats) m.dispose();
@@ -142,12 +156,33 @@ export class ObjectView {
           opacity: this.xray ? 0.45 : 1,
           depthWrite: !this.xray,
         };
-        return shading === 'material'
-          ? new THREE.MeshStandardMaterial({ ...common, roughness: l.roughness, metalness: l.metallic })
-          : new THREE.MeshMatcapMaterial({ ...common, matcap: this.matcap });
+        const m =
+          shading === 'material'
+            ? new THREE.MeshStandardMaterial({ ...common, roughness: l.roughness, metalness: l.metallic })
+            : new THREE.MeshMatcapMaterial({ ...common, matcap: this.matcap });
+        if (hasPaint) {
+          m.defines = { ...m.defines, USE_UV: '' };
+          m.onBeforeCompile = (sh) => {
+            sh.uniforms.paintMap = this.paintUniform;
+            sh.fragmentShader = 'uniform sampler2D paintMap;\n' + sh.fragmentShader.replace('#include <color_fragment>', PAINT_CHUNK);
+          };
+          m.customProgramCacheKey = () => 'yb-paint';
+        }
+        return m;
       });
       this.surface.material = this.mats;
     }
+  }
+
+  /** The paint layer shown over the surface (null = none). Cheap to call every frame. */
+  setPaint(tex: THREE.Texture | null): void {
+    this.paintUniform.value = tex;
+  }
+
+  /** What the texture painter needs: the evaluated surface (with UVs) and its transform. */
+  paintSurface(): PaintSurface {
+    this.group.updateMatrixWorld(true);
+    return { geometry: this.surface.geometry, matrixWorld: this.group.matrixWorld, topoKey: this.topoKey };
   }
 
   setOutline(state: 'none' | 'selected' | 'active'): void {

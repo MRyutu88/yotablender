@@ -1,14 +1,14 @@
 {
  "format": "yotablender",
- "version": 2,
- "generator": "YotaBlender 0.2",
+ "version": 3,
+ "generator": "YotaBlender 0.3",
  "unit": "m",
  "up_axis": "Z",
  "project": {
-  "id": "a160ebc8-7d91-4861-8a55-f26843eac8e2",
+  "id": "7c481346-4284-4d1a-b01a-ebd0bab668af",
   "name": "YotaBlender sample",
-  "created": 1795563115461,
-  "modified": 1795563115461
+  "created": 1795565934305,
+  "modified": 1795565934305
  },
  "materials": [
   {
@@ -36,9 +36,20 @@
    "metallic": 0.2
   }
  ],
+ "images": [
+  {
+   "name": "Character Body Paint",
+   "width": 256,
+   "height": 256,
+   "colorspace": "sRGB",
+   "alpha_mode": "STRAIGHT",
+   "file_format": "PNG",
+   "data": "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"
+  }
+ ],
  "objects": [
   {
-   "id": "9f2efa17-d8c5-4576-9ad0-8106f4c8e84f",
+   "id": "17d9681b-0afc-4987-a213-2063855ecfdb",
    "name": "Character Body",
    "location": [
     0,
@@ -193,7 +204,165 @@
      0,
      1
     ],
-    "color_attributes": []
+    "color_attributes": [],
+    "uv_layers": [
+     {
+      "name": "UVMap",
+      "domain": "CORNER",
+      "data_type": "FLOAT2",
+      "data": [
+       [
+        0.455195,
+        0.005984
+       ],
+       [
+        0.455195,
+        0.414357
+       ],
+       [
+        0.251008,
+        0.414357
+       ],
+       [
+        0.251008,
+        0.005984
+       ],
+       [
+        0.414357,
+        0.994016
+       ],
+       [
+        0.005984,
+        0.994016
+       ],
+       [
+        0.005984,
+        0.708155
+       ],
+       [
+        0.414357,
+        0.708155
+       ],
+       [
+        0.867536,
+        0.210171
+       ],
+       [
+        0.459163,
+        0.210171
+       ],
+       [
+        0.459163,
+        0.005984
+       ],
+       [
+        0.867536,
+        0.005984
+       ],
+       [
+        0.745024,
+        0.459163
+       ],
+       [
+        0.745024,
+        0.663349
+       ],
+       [
+        0.459163,
+        0.663349
+       ],
+       [
+        0.459163,
+        0.459163
+       ],
+       [
+        0.251008,
+        0.418325
+       ],
+       [
+        0.455195,
+        0.418325
+       ],
+       [
+        0.455195,
+        0.704187
+       ],
+       [
+        0.251008,
+        0.704187
+       ],
+       [
+        0.251008,
+        0.005984
+       ],
+       [
+        0.251008,
+        0.414357
+       ],
+       [
+        0.005984,
+        0.414357
+       ],
+       [
+        0.005984,
+        0.005984
+       ],
+       [
+        0.251008,
+        0.418325
+       ],
+       [
+        0.251008,
+        0.704187
+       ],
+       [
+        0.005984,
+        0.704187
+       ],
+       [
+        0.005984,
+        0.418325
+       ],
+       [
+        0.459163,
+        0.210171
+       ],
+       [
+        0.867536,
+        0.210171
+       ],
+       [
+        0.867536,
+        0.455195
+       ],
+       [
+        0.459163,
+        0.455195
+       ],
+       [
+        0.459163,
+        0.663349
+       ],
+       [
+        0.745024,
+        0.663349
+       ],
+       [
+        0.745024,
+        0.908373
+       ],
+       [
+        0.459163,
+        0.908373
+       ]
+      ]
+     }
+    ]
+   },
+   "texture": {
+    "image": "Character Body Paint",
+    "uv_map": "UVMap",
+    "blend": "MIX_ALPHA"
    },
    "modifiers": [
     {
@@ -221,7 +390,7 @@
    ]
   },
   {
-   "id": "40dcc030-2772-4736-b1fa-34c14c811182",
+   "id": "a1070cfa-7039-4625-b11f-263be79719ba",
    "name": "Cylinder 8",
    "location": [
     2.5,
@@ -410,12 +579,14 @@
      0,
      0
     ],
-    "color_attributes": []
+    "color_attributes": [],
+    "uv_layers": []
    },
+   "texture": null,
    "modifiers": []
   },
   {
-   "id": "c42ca10e-c5f8-45c1-b311-30f8d088f23a",
+   "id": "78c02d7f-aaa7-4838-8187-3ad6056e92ec",
    "name": "Cone",
    "location": [
     -2.5,
@@ -576,12 +747,14 @@
        ]
       ]
      }
-    ]
+    ],
+    "uv_layers": []
    },
+   "texture": null,
    "modifiers": []
   },
   {
-   "id": "9dcd981a-0829-4113-b670-73d3d675b550",
+   "id": "12421209-86e8-40b8-9691-9202a73e91df",
    "name": "Torus",
    "location": [
     0,
@@ -1476,8 +1649,10 @@
      0,
      0
     ],
-    "color_attributes": []
+    "color_attributes": [],
+    "uv_layers": []
    },
+   "texture": null,
    "modifiers": []
   }
  ]

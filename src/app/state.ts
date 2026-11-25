@@ -10,7 +10,7 @@ export type Mode = 'object' | 'edit' | 'paint';
 export type ToolId = 'select' | 'box' | 'lasso' | 'move' | 'rotate' | 'scale';
 export type PickOp = 'replace' | 'add' | 'sub';
 export const popover = signal<null | 'select'>(null);
-export type SheetId = null | 'add' | 'outliner' | 'modifiers' | 'menu' | 'item' | 'projects' | 'help' | 'export' | 'materials';
+export type SheetId = null | 'add' | 'outliner' | 'modifiers' | 'menu' | 'item' | 'projects' | 'help' | 'export' | 'materials' | 'texture';
 
 /** Axis constraint for transforms: one axis, a plane (all but one axis), or a custom direction. */
 export type Constraint =
@@ -69,9 +69,15 @@ export const shading = signal<'solid' | 'material'>('solid');
 /** Material slot being edited in the Materials sheet. */
 export const activeSlot = signal(0);
 
-// Vertex Paint
-export type PaintTool = 'draw' | 'blur' | 'pick';
+// Vertex Paint / Texture Paint
+export type PaintTool = 'draw' | 'blur' | 'erase' | 'pick';
 export const paintTool = signal<PaintTool>('draw');
+/** What Paint mode paints into: the "Color" attribute or the object's paint texture. */
+export const paintTarget = signal<'vertex' | 'texture'>('vertex');
+/** Size of new paint textures (square). */
+export const textureSize = signal(1024);
+/** Brush edge for texture painting: 0 soft … 1 hard. */
+export const brushHardness = signal(0.5);
 /** Brush color, linear RGB. */
 export const brushColor = signal<[number, number, number]>([0.88, 0.58, 0.39]);
 /** Brush radius in CSS px (screen space, like Blender's default). */

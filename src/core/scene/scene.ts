@@ -16,6 +16,17 @@ export interface Material {
   metallic: number;
 }
 
+/** A texture image (paint layer). sRGB, straight alpha, stored as PNG. */
+export interface ProjectImage {
+  id: string;
+  /** Blender image name. */
+  name: string;
+  width: number;
+  height: number;
+  /** PNG file bytes. */
+  png: Uint8Array;
+}
+
 export interface SceneObject {
   id: string;
   name: string;
@@ -32,6 +43,11 @@ export interface SceneObject {
   shade_smooth: boolean;
   /** Edit-mode selection, kept per object like Blender keeps it in the mesh. */
   editSelection: Selection;
+  /**
+   * Paint layer (image id), drawn over the object's colors through its "UVMap" (mesh.uvs).
+   * Unpainted texels are transparent.
+   */
+  texture?: string;
   /** How the object was created, for the Adjust Last Operation panel. */
   primitive?: { type: PrimitiveType; params: PrimitiveParams[PrimitiveType] };
 }
@@ -41,6 +57,7 @@ export interface Project {
   name: string;
   objects: SceneObject[];
   materials: Material[];
+  images: ProjectImage[];
   created: number;
   modified: number;
 }
@@ -57,7 +74,7 @@ export const defaultMaterial = (): Material => ({
 
 export function newProject(name = 'Untitled'): Project {
   const t = Date.now();
-  return { id: uid(), name, objects: [], materials: [defaultMaterial()], created: t, modified: t };
+  return { id: uid(), name, objects: [], materials: [defaultMaterial()], images: [], created: t, modified: t };
 }
 
 export function newObject(name: string, mesh: Mesh, init: Partial<SceneObject> = {}): SceneObject {

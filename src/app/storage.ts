@@ -2,22 +2,27 @@
 
 import { openDB, type IDBPDatabase } from 'idb';
 import type { Project } from '../core/scene/scene';
-import { deserializeProject, serializeProject, type ProjectFileV2 } from '../core/io/projectJson';
+import { deserializeProject, serializeProject, type ProjectFileV3 } from '../core/io/projectJson';
 
 interface StoredProject {
   id: string;
   name: string;
   modified: number;
   objects: number;
-  data: ProjectFileV2;
+  /** The project file without image bytes; those live in the 'images' store. */
+  data: ProjectFileV3;
 }
 
 let dbp: Promise<IDBPDatabase> | null = null;
 function db(): Promise<IDBPDatabase> {
-  dbp ??= openDB('yotablender', 1, {
-    upgrade(d) {
-      d.createObjectStore('projects', { keyPath: 'id' });
-      d.createObjectStore('kv');
+  dbp ??= openDB('yotablender', 2, {
+    upgrade(d, oldVersion) {
+      if (oldVersion < 1) {
+        d.createObjectStore('projects', { keyPath: 'id' });
+        d.createObjectStore('kv');
+      }
+      // Texture PNGs, keyed "<project id>/<image name>", written only when they change.
+      if (oldVersion < 2) d.createObjectStore('images');
     },
   });
   return dbp;
@@ -30,16 +35,57 @@ export interface ProjectMeta {
   objects: number;
 }
 
+/** PNG buffers already written, per storage key (so unchanged textures aren't rewritten). */
+const savedImages = new Map<string, Uint8Array>();
+const imageKey = (projectId: string, name: string) => `${projectId}/${name}`;
+
 export async function saveProject(p: Project): Promise<void> {
-  const rec: StoredProject = { id: p.id, name: p.name, modified: p.modified, objects: p.objects.length, data: serializeProject(p) };
+  const rec: StoredProject = {
+    id: p.id,
+    name: p.name,
+    modified: p.modified,
+    objects: p.objects.length,
+    data: serializeProject(p, { embedImages: false }),
+  };
   const d = await db();
-  await d.put('projects', rec);
-  await d.put('kv', p.id, 'lastProject');
+  const tx = d.transaction(['projects', 'kv', 'images'], 'readwrite');
+  const images = tx.objectStore('images');
+  const keep = new Set<string>();
+  for (const im of p.images) {
+    const k = imageKey(p.id, im.name);
+    keep.add(k);
+    if (savedImages.get(k) !== im.png) {
+      void images.put(im.png, k);
+      savedImages.set(k, im.png);
+    }
+  }
+  // Images of this project that are gone (texture removed / object deleted).
+  for (const k of (await images.getAllKeys(IDBKeyRange.bound(`${p.id}/`, `${p.id}/\uffff`))) as string[]) {
+    if (!keep.has(k)) {
+      void images.delete(k);
+      savedImages.delete(k);
+    }
+  }
+  void tx.objectStore('projects').put(rec);
+  void tx.objectStore('kv').put(p.id, 'lastProject');
+  await tx.done;
 }
 
 export async function loadProject(id: string): Promise<Project | null> {
-  const rec = (await (await db()).get('projects', id)) as StoredProject | undefined;
-  return rec ? deserializeProject(rec.data) : null;
+  const d = await db();
+  const rec = (await d.get('projects', id)) as StoredProject | undefined;
+  if (!rec) return null;
+  const bytes = new Map<string, Uint8Array>();
+  for (const im of rec.data.images ?? []) {
+    const k = imageKey(id, im.name);
+    const png = (await d.get('images', k)) as Uint8Array | undefined;
+    if (png) {
+      bytes.set(im.name, png);
+      savedImages.set(k, png);
+    }
+  }
+  const p = deserializeProject(rec.data, (n) => bytes.get(n));
+  return p;
 }
 
 export async function listProjects(): Promise<ProjectMeta[]> {
@@ -48,7 +94,9 @@ export async function listProjects(): Promise<ProjectMeta[]> {
 }
 
 export async function deleteProject(id: string): Promise<void> {
-  await (await db()).delete('projects', id);
+  const d = await db();
+  await d.delete('projects', id);
+  await d.delete('images', IDBKeyRange.bound(`${id}/`, `${id}/\uffff`));
 }
 
 export async function lastProjectId(): Promise<string | null> {

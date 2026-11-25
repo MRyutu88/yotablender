@@ -1,7 +1,7 @@
 {
   "name": "yotablender",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "description": "Touch-first low-poly character modeler for phones, with a Blender round-trip.",
   "scripts": {
@@ -12,7 +12,8 @@
     "test:watch": "vitest",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "icons": "node scripts/make-icons.mjs"
+    "icons": "node scripts/make-icons.mjs",
+    "addon": "node scripts/build-addon.mjs"
   },
   "dependencies": {
     "@preact/signals": "^2.11.4",

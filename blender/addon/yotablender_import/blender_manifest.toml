@@ -1,0 +1,17 @@
+schema_version = "1.0.0"
+
+id = "yotablender_import"
+version = "0.3.0"
+name = "YotaBlender Importer"
+tagline = "Import YotaBlender phone projects with modifiers and paint"
+maintainer = "MRyutu88"
+type = "add-on"
+website = "https://github.com/MRyutu88/yotablender"
+tags = ["Import-Export"]
+
+blender_version_min = "4.2.0"
+
+license = ["SPDX:GPL-3.0-or-later"]
+
+[permissions]
+files = "Read project files and unpack their textures"

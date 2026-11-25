@@ -52,7 +52,11 @@ import {
 import { makeEditTarget, TransformSession, type TransformKind } from './transform';
 import * as S from './state';
 import { Autosaver, deleteProject, lastProjectId, listProjects, loadProject, saveProject } from './storage';
-import { objFiles, pickFile, projectFile, shareOrDownload } from './files';
+import { objFiles, pickFile, projectFile, safeFileName, shareOrDownload } from './files';
+import { TexturePainter, diffTiles, flipRows, type PaintLayer, type PaintTile } from '../render/texturePaint';
+import { unwrap } from '../core/uv/unwrap';
+import { encodePng } from '../core/io/png';
+import type { ProjectImage } from '../core/scene/scene';
 
 const PRIMITIVE_NAMES: Record<PrimitiveType, string> = {
   cube: 'Cube',
@@ -92,8 +96,13 @@ export class App implements SceneHost {
   private autosaver: Autosaver;
   private lastXray = false;
   private lastEval = { evalMs: 0, buildMs: 0 };
+  readonly painter: TexturePainter;
+  /** GPU paint layers by image id (created from the image's PNG when first needed). */
+  private layers = new Map<string, PaintLayer>();
+  private encoding = new Map<string, Promise<void>>();
 
   constructor(readonly vp: Viewport) {
+    this.painter = new TexturePainter(vp.renderer);
     vp.onBeforeFrame = () => this.syncViews();
     vp.onAfterFrame = (stats) => {
       if (S.hudVisible.value) {
@@ -142,6 +151,8 @@ export class App implements SceneHost {
 
   private setProject(p: Project): void {
     this.project = p;
+    for (const l of this.layers.values()) l.dispose();
+    this.layers.clear();
     this.registry.clear();
     for (const o of p.objects) this.registry.set(o.id, o);
     this.evaluators.clear();
@@ -199,6 +210,7 @@ export class App implements SceneHost {
   }
 
   async saveProjectFile(): Promise<void> {
+    await this.encodeTextures();
     await this.autosaver.flush();
     const r = await shareOrDownload([projectFile(this.project)], this.project.name);
     if (r !== 'cancelled') S.toast(r === 'shared' ? 'Project shared' : 'Project downloaded');
@@ -221,7 +233,25 @@ export class App implements SceneHost {
 
   async exportObj(applyMirror: boolean, zip: boolean): Promise<void> {
     if (!this.project.objects.some((o) => o.visible)) return S.toast('Nothing visible to export', 'error');
-    const r = await shareOrDownload(objFiles(this.project, applyMirror, zip), this.project.name);
+    // Painted objects get a flattened texture (paint over their colors), referenced by map_Kd.
+    const textures: Record<string, { name: string; png: Uint8Array }> = {};
+    const taken = new Set<string>();
+    for (const o of this.project.objects) {
+      if (!o.visible) continue;
+      const layer = this.layerOf(o);
+      const view = this.vp.views.get(o.id);
+      if (!layer || !view) continue;
+      let name = `${safeFileName(o.name)}_paint.png`;
+      for (let i = 2; taken.has(name); i++) name = `${safeFileName(o.name)}_paint_${i}.png`;
+      taken.add(name);
+      const slots = Array.from({ length: Math.max(1, o.materialSlots.length) }, (_, i) => {
+        const m = this.project.materials.find((x) => x.id === o.materialSlots[i]);
+        const c = m?.base_color ?? [0.8, 0.8, 0.8, 1];
+        return [c[0], c[1], c[2]] as [number, number, number];
+      });
+      textures[o.id] = { name, png: this.painter.flatten(layer, view.paintSurface(), slots, !!o.mesh.colors) };
+    }
+    const r = await shareOrDownload(objFiles(this.project, applyMirror, zip, textures), this.project.name);
     if (r !== 'cancelled') S.toast(r === 'shared' ? 'OBJ shared' : 'OBJ downloaded');
   }
 
@@ -375,6 +405,19 @@ export class App implements SceneHost {
         shade_smooth: o.shade_smooth,
         editSelection: cloneSelection(o.editSelection),
       });
+      // The copy gets its own paint texture (same pixels), so painting one doesn't change the other.
+      const img = this.imageOf(o);
+      if (img) {
+        const layer = this.layers.get(img.id);
+        const copy: ProjectImage = {
+          ...img,
+          id: uid(),
+          name: uniqueName(`${name} Paint`, this.project.images.map((i) => i.name)),
+          png: layer && layer.encodedVersion !== layer.version ? encodePng(flipRows(layer.cpu, img.width, img.height), img.width, img.height) : img.png,
+        };
+        this.project.images.push(copy);
+        c.texture = copy.id;
+      }
       this.registry.set(c.id, c);
       copies.push(c);
     }
@@ -704,13 +747,12 @@ export class App implements SceneHost {
       if (!o.visible) return S.toast('Unhide the object first', 'error');
       S.activeId.value = o.id;
       S.selectedIds.value = new Set([o.id]);
-      if (m === 'paint' && !o.mesh.colors) {
-        // Like Blender, painting needs a color attribute: add one, filled with white.
-        this.push(
-          recordChange(this, 'Add Color Attribute', { ids: [o.id] }, () => {
-            o.mesh.setData({ ...o.mesh.snapshot(), colors: new Array(o.mesh.vertCount * 4).fill(1) });
-          }),
-        );
+      // Objects with a paint texture open in Texture Paint; others in the last used target.
+      if (m === 'paint') {
+        if (this.hasPaintTexture(o)) S.paintTarget.value = 'texture';
+        if (S.paintTarget.value === 'vertex' && !o.mesh.colors) this.addColorAttribute(o);
+        if (S.paintTarget.value === 'texture' && S.paintTool.value === 'blur') S.paintTool.value = 'draw';
+        if (S.paintTarget.value === 'vertex' && S.paintTool.value === 'erase') S.paintTool.value = 'draw';
       }
     }
     S.mode.value = m;
@@ -875,7 +917,12 @@ export class App implements SceneHost {
     return o && o.mesh.colors ? o : null;
   }
 
+  private get texturePainting(): boolean {
+    return S.mode.value === 'paint' && S.paintTarget.value === 'texture';
+  }
+
   paintStart(x: number, y: number): void {
+    if (this.texturePainting) return this.texStart(x, y);
     const o = this.paintObject();
     if (!o) return;
     if (S.paintTool.value === 'pick') return this.pickColor(x, y);
@@ -884,6 +931,7 @@ export class App implements SceneHost {
   }
 
   paintMove(x: number, y: number): void {
+    if (this.texturePainting) return this.texMove(x, y);
     const s = this.stroke;
     if (!s) {
       if (S.paintTool.value === 'pick') this.pickColor(x, y);
@@ -903,6 +951,7 @@ export class App implements SceneHost {
   }
 
   paintEnd(): void {
+    if (this.texturePainting) return this.texEnd();
     const s = this.stroke;
     this.stroke = null;
     S.brushCursor.value = null;
@@ -1007,6 +1056,255 @@ export class App implements SceneHost {
         if (S.mode.value === 'paint') S.mode.value = 'object';
       }),
     );
+  }
+
+  // --- Texture Paint ----------------------------------------------------------------------
+
+  private texStroke: { obj: SceneObject; image: ProjectImage; layer: PaintLayer; last: { x: number; y: number }; erase: boolean } | null = null;
+
+  /** The image an object paints into, when it has one and is unwrapped. */
+  private imageOf(o: SceneObject | null): ProjectImage | null {
+    if (!o?.texture || !o.mesh.uvs) return null;
+    return this.project.images.find((im) => im.id === o.texture) ?? null;
+  }
+
+  /** The object's GPU paint layer (created from its PNG on first use). */
+  layerOf(o: SceneObject | null): PaintLayer | null {
+    const img = this.imageOf(o);
+    if (!img) return null;
+    let l = this.layers.get(img.id);
+    if (!l) {
+      try {
+        l = this.painter.createLayer(img.width, img.png);
+      } catch (e) {
+        S.logError(`could not read texture ${img.name}: ${String(e)}`);
+        l = this.painter.createLayer(img.width);
+      }
+      this.layers.set(img.id, l);
+    }
+    return l;
+  }
+
+  /** True when the object can be texture painted (has UVs and a paint texture). */
+  hasPaintTexture(o: SceneObject | null = this.active): boolean {
+    return !!this.imageOf(o);
+  }
+
+  setPaintTarget(t: 'vertex' | 'texture'): void {
+    S.paintTarget.value = t;
+    const tool = S.paintTool.value;
+    if (t === 'texture' && tool === 'blur') S.paintTool.value = 'draw';
+    if (t === 'vertex' && tool === 'erase') S.paintTool.value = 'draw';
+    const o = this.active;
+    if (t === 'vertex' && o && S.mode.value === 'paint' && !o.mesh.colors) this.addColorAttribute(o);
+    this.changed(false);
+  }
+
+  private addColorAttribute(o: SceneObject): void {
+    // Like Blender, vertex painting needs a color attribute: add one, filled with white.
+    this.push(
+      recordChange(this, 'Add Color Attribute', { ids: [o.id] }, () => {
+        o.mesh.setData({ ...o.mesh.snapshot(), colors: new Array(o.mesh.vertCount * 4).fill(1) });
+      }),
+    );
+  }
+
+  /** Smart-UV-style unwrap (if needed) and a new, transparent paint texture for the active object. */
+  createPaintTexture(size = S.textureSize.value): void {
+    const o = this.active;
+    if (!o) return S.toast('Select an object first', 'error');
+    if (!o.mesh.faces.length) return S.toast('This object has no faces to paint', 'error');
+    const img: ProjectImage = {
+      id: uid(),
+      name: uniqueName(`${o.name} Paint`, this.project.images.map((i) => i.name)),
+      width: size,
+      height: size,
+      png: encodePng(new Uint8Array(size * size * 4), size, size),
+    };
+    // Images stay in the project list (undo may bring the reference back); saving keeps only used ones.
+    this.project.images.push(img);
+    const hadUVs = !!o.mesh.uvs;
+    this.push(
+      recordChange(this, 'New Paint Texture', { ids: [o.id], meshes: !hadUVs }, () => {
+        if (!hadUVs) o.mesh.setData({ ...o.mesh.snapshot(), uvs: unwrap(o.mesh).uvs });
+        o.texture = img.id;
+      }),
+    );
+    S.toast(hadUVs ? `New ${size}×${size} texture` : `Unwrapped, new ${size}×${size} texture`);
+  }
+
+  /** Unwraps again (after big topology changes). The paint is cleared, since the islands move. */
+  reunwrap(): void {
+    const o = this.active;
+    if (!o?.mesh.faces.length) return;
+    const layer = this.layerOf(o);
+    const img = this.imageOf(o);
+    const a = recordChange(this, 'Unwrap', { ids: [o.id] }, () => o.mesh.setData({ ...o.mesh.snapshot(), uvs: unwrap(o.mesh).uvs }));
+    let cmd: Command = a;
+    if (layer && img) {
+      const before = layer.cpu.slice();
+      layer.cpu.fill(0);
+      this.painter.upload(layer);
+      layer.version++;
+      cmd = composite('Unwrap', a, this.tilesCommand(img, layer, diffTiles(layer.size, before, layer.cpu), 'Clear Paint'));
+      this.encodeLater(img);
+    }
+    this.push(cmd);
+    S.toast(layer ? 'Unwrapped again: paint cleared (Undo brings it back)' : 'Unwrapped');
+  }
+
+  /** Removes the paint texture (the UVs stay). Undo brings it back. */
+  removePaintTexture(): void {
+    const o = this.active;
+    if (!o?.texture) return;
+    this.push(recordChange(this, 'Remove Paint Texture', { ids: [o.id], meshes: false }, () => (o.texture = undefined)));
+    if (S.mode.value === 'paint') this.setPaintTarget('vertex');
+  }
+
+  /** Shares the paint layer as PNG (transparent where unpainted). */
+  async exportTexturePng(): Promise<void> {
+    const o = this.active, img = this.imageOf(o);
+    if (!o || !img) return S.toast('No paint texture', 'error');
+    await this.encodeTextures();
+    const file = new File([img.png as BlobPart], `${safeFileName(img.name)}.png`, { type: 'image/png' });
+    const r = await shareOrDownload([file], img.name);
+    if (r !== 'cancelled') S.toast(r === 'shared' ? 'Texture shared' : 'Texture downloaded');
+  }
+
+  private texStart(x: number, y: number): void {
+    const o = this.active;
+    const img = this.imageOf(o);
+    const layer = this.layerOf(o);
+    if (!o || !img || !layer) return S.toast('Add a paint texture first', 'error');
+    if (S.paintTool.value === 'pick') return this.texPick(x, y);
+    this.syncViews(); // geometry and matrices up to date
+    const view = this.vp.views.get(o.id);
+    if (!view) return;
+    const erase = S.paintTool.value === 'erase';
+    const [r, g, b] = S.brushColor.value;
+    this.painter.beginStroke(layer, view.paintSurface(), this.vp.cam.camera, this.vp.size, [linToSrgb(r), linToSrgb(g), linToSrgb(b)], erase ? 1 : 0);
+    this.texStroke = { obj: o, image: img, layer, last: { x, y }, erase };
+    this.texDab(x, y);
+    this.painter.compose();
+    S.brushCursor.value = { x, y, r: S.brushRadius.value };
+    this.vp.requestRender();
+  }
+
+  private texDab(x: number, y: number): void {
+    this.painter.dab({ x, y, radius: S.brushRadius.value, strength: S.brushStrength.value, hardness: S.brushHardness.value });
+  }
+
+  private texMove(x: number, y: number): void {
+    const s = this.texStroke;
+    const r = S.brushRadius.value;
+    if (!s) {
+      if (S.paintTool.value === 'pick') this.texPick(x, y);
+      return;
+    }
+    // Dabs every 15% of the radius: smooth lines, and the mask (max) keeps the strength even.
+    const dist = Math.hypot(x - s.last.x, y - s.last.y);
+    const step = Math.max(1.5, r * 0.15);
+    const n = Math.floor(dist / step);
+    for (let i = 1; i <= n; i++) {
+      const t = (i * step) / dist;
+      this.texDab(s.last.x + (x - s.last.x) * t, s.last.y + (y - s.last.y) * t);
+    }
+    if (n > 0) {
+      s.last = { x: s.last.x + ((x - s.last.x) * n * step) / dist, y: s.last.y + ((y - s.last.y) * n * step) / dist };
+      this.painter.compose();
+      this.vp.requestRender();
+    }
+    S.brushCursor.value = { x, y, r };
+  }
+
+  private texEnd(): void {
+    const s = this.texStroke;
+    this.texStroke = null;
+    S.brushCursor.value = null;
+    if (!s) return;
+    const tiles = this.painter.endStroke();
+    this.vp.requestRender();
+    if (!tiles.length) return;
+    this.push(this.tilesCommand(s.image, s.layer, tiles, s.erase ? 'Erase' : 'Paint'));
+    this.encodeLater(s.image);
+  }
+
+  /** Undo step for a paint change: only the changed 64×64 tiles, before and after. */
+  private tilesCommand(img: ProjectImage, layer: PaintLayer, tiles: PaintTile[], label: string): Command {
+    const apply = (which: 'before' | 'after') => () => {
+      this.painter.putTiles(layer, tiles, which);
+      this.encodeLater(img);
+      this.changed(false);
+    };
+    const bytes = tiles.reduce((n, t) => n + t.before.length * 2, 256);
+    return { label, bytes, undo: apply('before'), redo: apply('after') };
+  }
+
+  /** Fills (or with Erase, clears) the whole paint texture. */
+  fillTexture(): void {
+    const o = this.active, img = this.imageOf(o), layer = this.layerOf(o);
+    const view = o ? this.vp.views.get(o.id) : undefined;
+    if (!o || !img || !layer || !view) return;
+    const [r, g, b] = S.brushColor.value;
+    const erase = S.paintTool.value === 'erase';
+    const tiles = this.painter.fill(layer, view.paintSurface(), [linToSrgb(r), linToSrgb(g), linToSrgb(b)], erase ? 1 : 0);
+    this.vp.requestRender();
+    if (!tiles.length) return;
+    this.push(this.tilesCommand(img, layer, tiles, erase ? 'Clear Paint' : 'Fill'));
+    this.encodeLater(img);
+  }
+
+  /** Eyedropper: the paint under the finger, or the material color when unpainted there. */
+  private texPick(x: number, y: number): void {
+    const o = this.active, layer = this.layerOf(o);
+    const view = o ? this.vp.views.get(o.id) : undefined;
+    if (!o || !layer || !view) return;
+    const { width, height } = this.vp.size;
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(new THREE.Vector2((x / width) * 2 - 1, -(y / height) * 2 + 1), this.vp.cam.camera);
+    view.surface.geometry.computeBoundingSphere();
+    view.surface.updateMatrixWorld(true);
+    const hit = ray.intersectObject(view.surface, false)[0];
+    if (!hit?.uv) return;
+    const [pr, pg, pb, pa] = this.painter.sample(layer, hit.uv.x, hit.uv.y);
+    let c: [number, number, number];
+    if (pa >= 128) c = [srgbToLin(pr / 255), srgbToLin(pg / 255), srgbToLin(pb / 255)];
+    else {
+      const slot = hit.face?.materialIndex ?? 0;
+      const m = this.project.materials.find((mm) => mm.id === o.materialSlots[slot]);
+      c = m ? [m.base_color[0], m.base_color[1], m.base_color[2]] : [0.8, 0.8, 0.8];
+    }
+    S.brushColor.value = c;
+    S.haptic(6);
+  }
+
+  /** Re-encodes an image's PNG in the background, then autosaves. */
+  private encodeLater(img: ProjectImage): void {
+    const layer = this.layers.get(img.id);
+    if (!layer || this.encoding.has(img.id)) return;
+    const job = (async () => {
+      try {
+        // Keep encoding until the PNG matches the latest pixels (painting may go on meanwhile).
+        while (layer.encodedVersion !== layer.version) {
+          const v = layer.version;
+          img.png = await this.painter.encode(layer);
+          layer.encodedVersion = v;
+        }
+      } finally {
+        this.encoding.delete(img.id);
+      }
+      this.autosaver.schedule();
+    })();
+    this.encoding.set(img.id, job);
+  }
+
+  /** Waits until every changed texture has an up-to-date PNG (before saving/sharing files). */
+  async encodeTextures(): Promise<void> {
+    for (const img of this.project.images) {
+      const l = this.layers.get(img.id);
+      if (l && l.encodedVersion !== l.version) this.encodeLater(img);
+    }
+    await Promise.all([...this.encoding.values()]);
   }
 
   // --- Materials --------------------------------------------------------------------------
@@ -1397,6 +1695,7 @@ export class App implements SceneHost {
         buildMs += ev.buildMs;
       }
       const view = this.vp.view(o.id);
+      view.setPaint(this.layerOf(o)?.texture ?? null);
       const looks = o.materialSlots.map((id) => {
         const m = this.project.materials.find((x) => x.id === id);
         return { color: m?.base_color ?? [0.8, 0.8, 0.8, 1], roughness: m?.roughness ?? 0.5, metallic: m?.metallic ?? 0 } as SlotLook;
@@ -1432,6 +1731,9 @@ export class App implements SceneHost {
     ctx.drawImage(this.vp.canvas, sx, sy, region * dpr, region * dpr, 0, 0, c.width, c.height);
   }
 }
+
+const linToSrgb = (c: number) => (c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(Math.max(0, c), 1 / 2.4) - 0.055);
+const srgbToLin = (c: number) => (c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
 
 function sameSel(a: Selection, b: Selection): boolean {
   const eq = (x: Set<number>, y: Set<number>) => x.size === y.size && [...x].every((v) => y.has(v));

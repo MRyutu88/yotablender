@@ -51,13 +51,24 @@ export function projectFile(p: Project): File {
   return new File([JSON.stringify(serializeProject(p))], `${safeFileName(p.name)}.yblend.json`, { type: 'application/json' });
 }
 
-export function objFiles(p: Project, applyMirror: boolean, asZip: boolean): File[] {
+/** OBJ + MTL, plus one PNG per painted object (`textures` by object id). */
+export function objFiles(p: Project, applyMirror: boolean, asZip: boolean, textures: Record<string, { name: string; png: Uint8Array }> = {}): File[] {
   const base = safeFileName(p.name);
-  const { obj, mtl } = exportObj(p, { applyMirror, mtlName: `${base}.mtl` });
+  const textureFiles = Object.fromEntries(Object.entries(textures).map(([id, t]) => [id, t.name]));
+  const { obj, mtl } = exportObj(p, { applyMirror, mtlName: `${base}.mtl`, textureFiles });
+  const pngs = Object.values(textures);
   if (asZip) {
-    const zip = zipSync({ [`${base}.obj`]: strToU8(obj), [`${base}.mtl`]: strToU8(mtl) });
+    const zip = zipSync({
+      [`${base}.obj`]: strToU8(obj),
+      [`${base}.mtl`]: strToU8(mtl),
+      ...Object.fromEntries(pngs.map((t) => [t.name, [t.png, { level: 0 }] as [Uint8Array, { level: 0 }]])),
+    });
     return [new File([zip as BlobPart], `${base}.zip`, { type: 'application/zip' })];
   }
   // text/plain shares more reliably than model/obj on Android.
-  return [new File([obj], `${base}.obj`, { type: 'text/plain' }), new File([mtl], `${base}.mtl`, { type: 'text/plain' })];
+  return [
+    new File([obj], `${base}.obj`, { type: 'text/plain' }),
+    new File([mtl], `${base}.mtl`, { type: 'text/plain' }),
+    ...pngs.map((t) => new File([t.png as BlobPart], t.name, { type: 'image/png' })),
+  ];
 }

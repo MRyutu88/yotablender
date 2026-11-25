@@ -3,59 +3,65 @@
 // blender/verify_obj_import.py imports into Blender to confirm quads/n-gons survive.
 import { describe, expect, it } from 'vitest';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { Mesh, type MeshData } from '../mesh/mesh';
-import { buildPrimitive } from '../primitives/primitives';
-import { newObject, newProject, type Project } from '../scene/scene';
-import { newMirror, newSubsurf } from '../modifiers/types';
-import { extrude } from '../mesh/ops';
-import { selectionFromFaces } from '../mesh/selection';
 import { exportObj, parseObj } from './obj';
 import { serializeProject } from './projectJson';
-import { assertValid } from '../mesh/validate';
+import { sampleProject, samplePaintPixel, SAMPLE_TEXTURE_SIZE } from './sample';
+import { StackEvaluator } from '../modifiers/stack';
+import type { Project } from '../scene/scene';
 
-function characterWithArm(): MeshData {
-  const positions: number[] = [];
-  for (let x = 0; x < 2; x++) for (let y = 0; y < 2; y++) for (let z = 0; z < 2; z++) positions.push(x * 0.5, y ? 0.35 : -0.35, z ? 1.6 : 0.6);
-  const half: MeshData = {
-    positions,
-    faces: [
-      [2, 3, 7, 6],
-      [6, 7, 5, 4],
-      [4, 5, 1, 0],
-      [2, 6, 4, 0],
-      [7, 3, 1, 5],
-    ],
-    looseEdges: [],
-  };
-  // Extrude the +X side face outwards (the arm) and move it.
-  const side = half.faces.findIndex((f) => f.every((v) => half.positions[v * 3] > 0.25));
-  const r = extrude(half, selectionFromFaces(half, [side]));
-  for (const v of r.selection.verts) r.data.positions[v * 3] += 0.6;
-  assertValid(r.data);
-  return r.data;
-}
-
-export function sampleProject(): Project {
-  const p = newProject('YotaBlender sample');
-  // A second material ("Shirt") on the character's lower faces, and painted colors on the cone.
-  const shirt = { id: 'mat-shirt', name: 'Shirt', base_color: [0.1, 0.3, 0.8, 1] as [number, number, number, number], roughness: 0.3, metallic: 0.2 };
-  p.materials.push(shirt);
-  const body = characterWithArm();
-  body.faceMats = body.faces.map((f) => (f.every((v) => body.positions[v * 3 + 2] < 1.1) ? 1 : 0));
-  const cone = buildPrimitive('cone', { vertices: 6 });
-  // Red at the bottom, white at the tip (linear RGBA per vertex).
-  cone.colors = Array.from({ length: cone.positions.length / 3 }, (_, v) => (cone.positions[v * 3 + 2] > 0 ? [1, 1, 1, 1] : [0.8, 0.05, 0.05, 1])).flat();
-  p.objects.push(
-    newObject('Character Body', new Mesh(body), { modifiers: [newMirror(), newSubsurf()], shade_smooth: true, materialSlots: [p.materials[0].id, shirt.id] }),
-    newObject('Cylinder 8', new Mesh(buildPrimitive('cylinder', { vertices: 8 })), { location: [2.5, 0, 1] }),
-    newObject('Cone', new Mesh(cone), { location: [-2.5, 0, 1] }),
-    newObject('Torus', new Mesh(buildPrimitive('torus', { majorSegments: 12, minorSegments: 6 })), {
-      location: [0, 3, 1],
-      rotation_euler: [Math.PI / 4, 0, Math.PI / 6],
-      scale: [1, 1.5, 1],
+/**
+ * What the Blender add-on must reproduce, per object (blender/verify_addon_import.py compares).
+ * `evaluated` is the app's own Mirror → Subdivision result at the viewport level: vertex/face
+ * counts, the sum of all vertex positions and (with UVs) the sum of all corner UVs.
+ */
+export function addonExpectations(p: Project) {
+  return {
+    images: p.images.map((im) => ({
+      name: im.name,
+      size: [im.width, im.height],
+      // A few texels (x, y from the bottom-left, like Blender's pixels) and their RGBA 0..255.
+      samples: [
+        [5, 5],
+        [40, 5],
+        [100, 100],
+        [200, 250],
+      ].map(([x, y]) => ({ x, y, rgba: samplePaintPixel(x, y) })),
+    })),
+    objects: p.objects.map((o) => {
+      const ev = new StackEvaluator().evaluate(o.mesh, o.modifiers);
+      const sum = [0, 0, 0];
+      for (let i = 0; i < ev.positions.length; i++) sum[i % 3] += ev.positions[i];
+      let uvSum: number[] | null = null, corners = 0;
+      for (const f of ev.faces) corners += f.length;
+      if (ev.cornerUVs) {
+        uvSum = [0, 0];
+        for (const u of ev.cornerUVs) for (let i = 0; i < u.length; i++) uvSum[i % 2] += u[i];
+      }
+      const slotNames = o.materialSlots.map((id) => p.materials.find((m) => m.id === id)!.name);
+      return {
+        name: o.name,
+        verts: o.mesh.vertCount,
+        faces: o.mesh.faces.length,
+        loose_edges: o.mesh.looseEdges.length,
+        sizes: histogram(o.mesh.faces),
+        location: o.location,
+        rotation_euler: o.rotation_euler,
+        scale: o.scale,
+        shade_smooth: o.shade_smooth,
+        modifiers: o.modifiers.map((m) => Object.fromEntries(Object.entries(m).filter(([k]) => k !== 'drag_levels'))),
+        materials: slotNames.map((n) => {
+          const m = p.materials.find((x) => x.name === n)!;
+          return { name: n, base_color: m.base_color, roughness: m.roughness, metallic: m.metallic };
+        }),
+        face_materials: matCounts(o.mesh.faces.map((_, i) => slotNames[o.mesh.faceMats?.[i] ?? 0])),
+        colors: o.mesh.colors ? { first: o.mesh.colors.slice(0, 4), last: o.mesh.colors.slice(-4) } : null,
+        uv_corners: o.mesh.uvs ? o.mesh.uvs.reduce((n, u) => n + u.length / 2, 0) : 0,
+        uv_first_face: o.mesh.uvs ? o.mesh.uvs[0] : null,
+        texture: o.texture ? p.images.find((im) => im.id === o.texture)!.name : null,
+        evaluated: { verts: ev.nV, faces: ev.faces.length, corners, position_sum: sum, uv_sum: uvSum },
+      };
     }),
-  );
-  return p;
+  };
 }
 
 const matCounts = (names: string[]) => {
@@ -71,6 +77,15 @@ const histogram = (faces: number[][]) => {
 };
 
 describe('sample scene exports', () => {
+  it('has a painted, unwrapped character with sane expectations', () => {
+    const e = addonExpectations(sampleProject());
+    const body = e.objects[0];
+    expect(body.texture).toBe('Character Body Paint');
+    expect(body.uv_corners).toBe(sampleProject().objects[0].mesh.faces.reduce((n, f) => n + f.length, 0));
+    expect(body.evaluated.uv_sum).not.toBeNull();
+    expect(e.images[0].size).toEqual([SAMPLE_TEXTURE_SIZE, SAMPLE_TEXTURE_SIZE]);
+  });
+
   it('keeps every face size through OBJ', () => {
     const p = sampleProject();
     const { obj, mtl } = exportObj(p, { mtlName: 'yotablender-sample.mtl' });
@@ -82,6 +97,7 @@ describe('sample scene exports', () => {
       sizes: histogram(o.mesh.faces),
       materials: matCounts(o.mesh.faces.map((_, i) => p.materials.find((m) => m.id === o.materialSlots[o.mesh.faceMats?.[i] ?? 0])!.name)),
       hasColors: !!o.mesh.colors,
+      hasUVs: !!o.mesh.uvs,
     }));
     expect(
       parsed.map((o) => ({
@@ -91,6 +107,7 @@ describe('sample scene exports', () => {
         sizes: histogram(o.faces),
         materials: matCounts(o.faceMaterials),
         hasColors: !!o.colors,
+        hasUVs: !!o.uvs,
       })),
     ).toEqual(expected);
     expect(mtl).toMatch(/newmtl Shirt/);
@@ -111,8 +128,10 @@ describe('sample scene exports', () => {
         sizes: histogram(o.faces),
         materials: matCounts(o.faceMaterials),
         hasColors: !!o.colors,
+        hasUVs: !!o.uvs,
       }));
       writeFileSync(new URL('expected-counts.json', dir), JSON.stringify({ cage: expected, mirrored: mirroredParsed }, null, 1));
+      writeFileSync(new URL('expected-addon.json', dir), JSON.stringify(addonExpectations(p), null, 1));
     }
   });
 });

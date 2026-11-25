@@ -82,5 +82,6 @@ export const Icon = {
   dropper: (p?: P) => I([<path d="M14 6l4 4M17 3.5a2.1 2.1 0 0 1 3 3L9 17.5 5 19l1.5-4z" />], p),
   fill: (p?: P) => I([<path d="M4 12 11 5l7 7-7 7z" />, <path d="M19.5 16.5c0 1.1-.7 2-1.5 2s-1.5-.9-1.5-2 1.5-3 1.5-3 1.5 1.9 1.5 3z" fill="currentColor" />], p),
   shade: (p?: P) => I([<circle cx="12" cy="12" r="8.5" />, <path d="M12 3.5a8.5 8.5 0 0 1 0 17" fill="currentColor" fill-opacity=".35" stroke="none" />, <circle cx="9" cy="9" r="1.6" fill="currentColor" />], p),
+  eraser: (p?: P) => I([<path d="M8.5 19 3.5 14a1.5 1.5 0 0 1 0-2.1L12 3.4a1.5 1.5 0 0 1 2.1 0l5.5 5.5a1.5 1.5 0 0 1 0 2.1L11.5 19z" />, <path d="M7 9.5l7.5 7.5M8.5 19H20" />], p),
   dots: (p?: P) => I([<circle cx="5" cy="12" r="1" />, <circle cx="12" cy="12" r="1" />, <circle cx="19" cy="12" r="1" />], p),
 };

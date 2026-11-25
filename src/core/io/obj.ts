@@ -6,8 +6,11 @@
 //   what Blender's own OBJ exporter writes, so Blender's default import (forward -Z, up Y)
 //   restores them.
 // - Loose edges are written as `l` lines; faces keep their vertex count and winding.
+// - Objects with UVs get `vt` lines and `f v/vt` faces. A painted object gets its own copies of
+//   its materials ("Skin (Body)") whose `map_Kd` is its flattened texture (paint over colors).
 
 import { buildMirrorPlan, evaluateMirror } from '../modifiers/mirror';
+import { mirrorCornerUVs } from '../uv/stackUV';
 import type { Project, SceneObject, Material } from '../scene/scene';
 import { objectMatrix, slotMaterial } from '../scene/scene';
 import { transformPoint } from '../math/mat4';
@@ -19,6 +22,8 @@ export interface ObjExportOptions {
   objectIds?: string[];
   /** File name used for the `mtllib` line. */
   mtlName?: string;
+  /** Texture file (`map_Kd`) per object id, for painted objects. */
+  textureFiles?: Record<string, string>;
 }
 
 const fmt = (n: number) => {
@@ -29,12 +34,14 @@ const fmt = (n: number) => {
 export function exportObj(project: Project, opts: ObjExportOptions = {}): { obj: string; mtl: string } {
   const mtlName = opts.mtlName ?? 'model.mtl';
   const objects = project.objects.filter((o) => (opts.objectIds ? opts.objectIds.includes(o.id) : o.visible));
-  const usedMats = new Map<string, Material>();
+  const usedMats = new Map<string, { mat: Material; name: string; map?: string }>();
   const lines: string[] = ['# YotaBlender OBJ export (cage)', `mtllib ${mtlName}`];
   let base = 1;
+  let uvBase = 1;
 
   for (const o of objects) {
-    const { positions, faces, faceSrc, loose, colors } = cageFor(o, !!opts.applyMirror);
+    const { positions, faces, faceSrc, loose, colors, uvs } = cageFor(o, !!opts.applyMirror);
+    const texFile = uvs ? opts.textureFiles?.[o.id] : undefined;
     const m = objectMatrix(o);
     const det =
       m[0] * (m[5] * m[10] - m[9] * m[6]) - m[4] * (m[1] * m[10] - m[9] * m[2]) + m[8] * (m[1] * m[6] - m[5] * m[2]);
@@ -47,6 +54,25 @@ export function exportObj(project: Project, opts: ObjExportOptions = {}): { obj:
       const c = colors ? ` ${fmt(linToSrgb(colors[i * 4]))} ${fmt(linToSrgb(colors[i * 4 + 1]))} ${fmt(linToSrgb(colors[i * 4 + 2]))}` : '';
       lines.push(`v ${fmt(x)} ${fmt(z)} ${fmt(-y)}${c}`);
     }
+    // UVs: one `vt` per distinct value, faces reference them per corner.
+    let cornerVt: number[][] | null = null;
+    let nVt = 0;
+    if (uvs) {
+      const index = new Map<string, number>();
+      cornerVt = uvs.map((u) => {
+        const out: number[] = [];
+        for (let i = 0; i < u.length; i += 2) {
+          const key = `${fmt(u[i])} ${fmt(u[i + 1])}`;
+          let k = index.get(key);
+          if (k === undefined) {
+            index.set(key, (k = nVt++));
+            lines.push(`vt ${key}`);
+          }
+          out.push(k + uvBase);
+        }
+        return out;
+      });
+    }
     lines.push(o.shade_smooth ? 's 1' : 's 0');
     let current = -1;
     faces.forEach((f, fi) => {
@@ -56,24 +82,26 @@ export function exportObj(project: Project, opts: ObjExportOptions = {}): { obj:
         current = slot;
         const mat = slotMaterial(project, o, slot);
         if (mat) {
-          usedMats.set(mat.id, mat);
-          lines.push(`usemtl ${safeName(mat.name)}`);
+          const name = safeName(texFile ? `${mat.name} (${o.name})` : mat.name);
+          usedMats.set(texFile ? `${mat.id}|${o.id}` : mat.id, { mat, name, map: texFile });
+          lines.push(`usemtl ${name}`);
         }
       }
       // A negative scale mirrors the object: flip winding so normals still point outwards.
-      const loop = det < 0 ? f.slice().reverse() : f;
-      lines.push('f ' + loop.map((v) => v + base).join(' '));
+      const corners = f.map((v, i) => (cornerVt ? `${v + base}/${cornerVt[fi][i]}` : `${v + base}`));
+      lines.push('f ' + (det < 0 ? corners.reverse() : corners).join(' '));
     });
     for (const [a, b] of loose) lines.push(`l ${a + base} ${b + base}`);
     base += n;
+    uvBase += nVt;
   }
 
   const mtl: string[] = ['# YotaBlender MTL export'];
-  for (const mat of usedMats.values()) {
+  for (const { mat, name, map } of usedMats.values()) {
     const [r, g, b, a] = mat.base_color;
     mtl.push(
       '',
-      `newmtl ${safeName(mat.name)}`,
+      `newmtl ${name}`,
       `Ns ${fmt((1 - mat.roughness) ** 2 * 1000)}`,
       'Ka 1.000000 1.000000 1.000000',
       `Kd ${fmt(r)} ${fmt(g)} ${fmt(b)}`,
@@ -84,6 +112,7 @@ export function exportObj(project: Project, opts: ObjExportOptions = {}): { obj:
       'illum 2',
       `Pr ${fmt(mat.roughness)}`,
       `Pm ${fmt(mat.metallic)}`,
+      ...(map ? [`map_Kd ${map}`] : []),
     );
   }
   return { obj: lines.join('\n') + '\n', mtl: mtl.join('\n') + '\n' };
@@ -93,7 +122,7 @@ function cageFor(o: SceneObject, applyMirror: boolean) {
   const mesh = o.mesh;
   const mirror = applyMirror ? o.modifiers.find((m) => m.type === 'MIRROR' && m.show_viewport) : undefined;
   if (!mirror || mirror.type !== 'MIRROR') {
-    return { positions: mesh.positions, faces: mesh.faces, faceSrc: null, loose: mesh.looseEdges, colors: mesh.colors };
+    return { positions: mesh.positions, faces: mesh.faces, faceSrc: null, loose: mesh.looseEdges, colors: mesh.colors, uvs: mesh.uvs };
   }
   const plan = buildMirrorPlan(mesh.positions, mesh.vertCount, mesh.faces, mesh.looseEdges, mirror);
   const pos = new Float64Array(plan.nOut * 3);
@@ -106,7 +135,8 @@ function cageFor(o: SceneObject, applyMirror: boolean) {
       colors.push(mesh.colors[s], mesh.colors[s + 1], mesh.colors[s + 2], mesh.colors[s + 3]);
     }
   }
-  return { positions: Array.from(pos), faces: plan.faces, faceSrc: plan.faceSrc, loose: plan.looseEdges, colors };
+  const uvs = mesh.uvs ? mirrorCornerUVs(mesh.uvs, plan.faceSrc, plan.faceRev) : undefined;
+  return { positions: Array.from(pos), faces: plan.faces, faceSrc: plan.faceSrc, loose: plan.looseEdges, colors, uvs };
 }
 
 const linToSrgb = (c: number) => (c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(Math.max(0, c), 1 / 2.4) - 0.055);
@@ -125,6 +155,8 @@ export interface ObjObject {
   colors?: number[];
   /** Material name per face. */
   faceMaterials: string[];
+  /** Corner UVs per face (u,v flat), when the file has `vt` and faces use them. */
+  uvs?: number[][];
   faces: number[][];
   lines: [number, number][];
   material?: string;
@@ -133,6 +165,7 @@ export interface ObjObject {
 export function parseObj(text: string): ObjObject[] {
   const all: number[] = [];
   const allColors: (number[] | null)[] = [];
+  const allUV: number[] = [];
   const objects: ObjObject[] = [];
   let cur: ObjObject | null = null;
   const ensure = () => {
@@ -167,8 +200,19 @@ export function parseObj(text: string): ObjObject[] {
       const [x, y, z, r, g, b] = rest.map(Number);
       all.push(x, -z, y); // Y-up back to Z-up
       allColors.push(rest.length >= 6 ? [srgbToLin(r), srgbToLin(g), srgbToLin(b)] : null);
+    } else if (tag === 'vt') {
+      allUV.push(Number(rest[0]), Number(rest[1]));
     } else if (tag === 'f' || tag === 'l') {
       const o = ensure();
+      if (tag === 'f' && rest[0].includes('/') && rest[0].split('/')[1]) {
+        (o.uvs ??= []).push(
+          rest.flatMap((t) => {
+            const i = parseInt(t.split('/')[1], 10);
+            const k = i < 0 ? allUV.length / 2 + i : i - 1;
+            return [allUV[k * 2], allUV[k * 2 + 1]];
+          }),
+        );
+      }
       const idx = rest.map((t) => {
         const i = parseInt(t.split('/')[0], 10);
         return i < 0 ? all.length / 3 + i : i - 1;

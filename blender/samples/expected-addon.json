@@ -1,0 +1,344 @@
+{
+ "images": [
+  {
+   "name": "Character Body Paint",
+   "size": [
+    256,
+    256
+   ],
+   "samples": [
+    {
+     "x": 5,
+     "y": 5,
+     "rgba": [
+      240,
+      140,
+      30,
+      255
+     ]
+    },
+    {
+     "x": 40,
+     "y": 5,
+     "rgba": [
+      0,
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "x": 100,
+     "y": 100,
+     "rgba": [
+      40,
+      90,
+      220,
+      128
+     ]
+    },
+    {
+     "x": 200,
+     "y": 250,
+     "rgba": [
+      0,
+      0,
+      0,
+      0
+     ]
+    }
+   ]
+  }
+ ],
+ "objects": [
+  {
+   "name": "Character Body",
+   "verts": 12,
+   "faces": 9,
+   "loose_edges": 0,
+   "sizes": {
+    "4": 9
+   },
+   "location": [
+    0,
+    0,
+    0
+   ],
+   "rotation_euler": [
+    0,
+    0,
+    0
+   ],
+   "scale": [
+    1,
+    1,
+    1
+   ],
+   "shade_smooth": true,
+   "modifiers": [
+    {
+     "type": "MIRROR",
+     "name": "Mirror",
+     "show_viewport": true,
+     "use_axis": [
+      true,
+      false,
+      false
+     ],
+     "use_clip": true,
+     "use_mirror_merge": true,
+     "merge_threshold": 0.001
+    },
+    {
+     "type": "SUBSURF",
+     "name": "Subdivision",
+     "show_viewport": true,
+     "levels": 2,
+     "render_levels": 2,
+     "use_limit_surface": true
+    }
+   ],
+   "materials": [
+    {
+     "name": "Material",
+     "base_color": [
+      0.8,
+      0.8,
+      0.8,
+      1
+     ],
+     "roughness": 0.5,
+     "metallic": 0
+    },
+    {
+     "name": "Shirt",
+     "base_color": [
+      0.1,
+      0.3,
+      0.8,
+      1
+     ],
+     "roughness": 0.3,
+     "metallic": 0.2
+    }
+   ],
+   "face_materials": {
+    "Material": 7,
+    "Shirt": 2
+   },
+   "colors": null,
+   "uv_corners": 36,
+   "uv_first_face": [
+    0.45519460360364383,
+    0.005984036036013121,
+    0.45519460360364383,
+    0.41435727927931376,
+    0.2510079819819935,
+    0.41435727927931376,
+    0.2510079819819935,
+    0.005984036036013121
+   ],
+   "texture": "Character Body Paint",
+   "evaluated": {
+    "verts": 290,
+    "faces": 288,
+    "corners": 1152,
+    "position_sum": [
+     0,
+     0,
+     318.99999845027924
+    ],
+    "uv_sum": [
+     474.1440611171325,
+     535.2724289729872
+    ]
+   }
+  },
+  {
+   "name": "Cylinder 8",
+   "verts": 16,
+   "faces": 10,
+   "loose_edges": 0,
+   "sizes": {
+    "4": 8,
+    "8": 2
+   },
+   "location": [
+    2.5,
+    0,
+    1
+   ],
+   "rotation_euler": [
+    0,
+    0,
+    0
+   ],
+   "scale": [
+    1,
+    1,
+    1
+   ],
+   "shade_smooth": false,
+   "modifiers": [],
+   "materials": [
+    {
+     "name": "Material",
+     "base_color": [
+      0.8,
+      0.8,
+      0.8,
+      1
+     ],
+     "roughness": 0.5,
+     "metallic": 0
+    }
+   ],
+   "face_materials": {
+    "Material": 10
+   },
+   "colors": null,
+   "uv_corners": 0,
+   "uv_first_face": null,
+   "texture": null,
+   "evaluated": {
+    "verts": 16,
+    "faces": 10,
+    "corners": 48,
+    "position_sum": [
+     0,
+     -4.440892098500626e-16,
+     0
+    ],
+    "uv_sum": null
+   }
+  },
+  {
+   "name": "Cone",
+   "verts": 7,
+   "faces": 7,
+   "loose_edges": 0,
+   "sizes": {
+    "3": 6,
+    "6": 1
+   },
+   "location": [
+    -2.5,
+    0,
+    1
+   ],
+   "rotation_euler": [
+    0,
+    0,
+    0
+   ],
+   "scale": [
+    1,
+    1,
+    1
+   ],
+   "shade_smooth": false,
+   "modifiers": [],
+   "materials": [
+    {
+     "name": "Material",
+     "base_color": [
+      0.8,
+      0.8,
+      0.8,
+      1
+     ],
+     "roughness": 0.5,
+     "metallic": 0
+    }
+   ],
+   "face_materials": {
+    "Material": 7
+   },
+   "colors": {
+    "first": [
+     0.8,
+     0.05,
+     0.05,
+     1
+    ],
+    "last": [
+     1,
+     1,
+     1,
+     1
+    ]
+   },
+   "uv_corners": 0,
+   "uv_first_face": null,
+   "texture": null,
+   "evaluated": {
+    "verts": 7,
+    "faces": 7,
+    "corners": 24,
+    "position_sum": [
+     2.220446049250313e-16,
+     0,
+     -5
+    ],
+    "uv_sum": null
+   }
+  },
+  {
+   "name": "Torus",
+   "verts": 72,
+   "faces": 72,
+   "loose_edges": 0,
+   "sizes": {
+    "4": 72
+   },
+   "location": [
+    0,
+    3,
+    1
+   ],
+   "rotation_euler": [
+    0.7853981633974483,
+    0,
+    0.5235987755982988
+   ],
+   "scale": [
+    1,
+    1.5,
+    1
+   ],
+   "shade_smooth": false,
+   "modifiers": [],
+   "materials": [
+    {
+     "name": "Material",
+     "base_color": [
+      0.8,
+      0.8,
+      0.8,
+      1
+     ],
+     "roughness": 0.5,
+     "metallic": 0
+    }
+   ],
+   "face_materials": {
+    "Material": 72
+   },
+   "colors": null,
+   "uv_corners": 0,
+   "uv_first_face": null,
+   "texture": null,
+   "evaluated": {
+    "verts": 72,
+    "faces": 72,
+    "corners": 288,
+    "position_sum": [
+     0,
+     0,
+     6.661338147750939e-16
+    ],
+    "uv_sum": null
+   }
+  }
+ ]
+}

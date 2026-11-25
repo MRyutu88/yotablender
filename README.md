@@ -22,8 +22,14 @@ A touch-first low-poly character modeler for phones (an installable PWA) with a 
 - **Materials:** slots per object, per-face assignment, base color / roughness / metallic,
   Solid or Material preview shading.
 - **Vertex Paint:** draw, blur and pick colors into a "Color" attribute (Vertex domain).
-- **Export:** OBJ + MTL (cage with quads/n-gons, per-face materials, vertex colors) and the
-  native `.yblend.json` project (modifiers, transforms, slots, colors) for the Blender add-on.
+- **Texture Paint:** Paint mode → **Texture**. One tap unwraps the object automatically (like
+  Blender's Smart UV Project) and adds a paint texture (512/1K/2K). Draw, Erase, Pick, Fill; the
+  paint sits on top of the object's colors. Strokes cross UV seams cleanly and, with Mirror,
+  paint both halves at once. Edits keep the UVs (loop cut/inset interpolate, extrude stretches);
+  ⋯ → Unwrap again re-unwraps, Export PNG shares the texture.
+- **Export:** OBJ + MTL (cage with quads/n-gons, per-face materials, vertex colors, UVs, and a
+  flattened PNG per painted object) and the native `.yblend.json` project (modifiers, transforms,
+  slots, colors, UVs, paint textures) for the Blender add-on.
 - Undo/redo for everything, autosave on the device, works offline.
 
 ## Develop
@@ -40,15 +46,37 @@ Install and offline need HTTPS. To test them on the dev server, open
 `chrome://flags/#unsafely-treat-insecure-origin-as-secure` on the phone and add the address,
 or use the GitHub Pages build (`.github/workflows/deploy.yml` deploys on every push to `main`).
 
-## Blender
+## Blender add-on (File → Import → YotaBlender)
 
+Imports `.yblend.json` projects into Blender 4.2+ (tested on 5.3) with everything the app knows:
+the exact cage (quads, n-gons, loose edges), location/rotation/scale, shade smooth, the
+Mirror → Subdivision Surface stack with the same settings, Principled BSDF materials with
+per-face assignment, the "Color" attribute (optionally wired into the materials), the "UVMap"
+and the paint texture (packed into the .blend, mixed over the base color by its alpha).
+Objects with UVs get Subdivision "UV Smooth: None", which matches how the app interpolates UVs,
+so the paint lands exactly where you painted it.
+
+Install: download `yotablender_import.zip` from the app's ☰ menu (or
+https://mryutu88.github.io/yotablender/yotablender_import.zip), then in Blender
+Edit → Preferences → Get Extensions → ⌄ → **Install from Disk…** and pick the zip.
+`npm run addon` builds the same zip into `blender/dist/`. The source is in
+`blender/addon/yotablender_import/`.
+
+## Blender checks
+
+- `blender/verify_addon_import.py` imports `blender/samples/yotablender-sample.yblend.json` with
+  the add-on (straight from the repo, or the installed one with `YB_USE_OPERATOR = True`) in a
+  temporary scene and compares everything with `blender/samples/expected-addon.json`, including
+  the subdivided vertex count, position sum and UV sum computed by the app itself.
 - `blender/verify_obj_import.py` imports `blender/samples/*.obj` into Blender and checks that
   every object, its face sizes, per-face materials and vertex colors survive. Regenerate the samples with
   `WRITE_SAMPLES=1 npx vitest run samples`.
 - `blender/make_subdiv_fixtures.py` regenerates the subdivision golden data used by the tests.
-- Import our OBJ in Blender with File → Import → Wavefront (.obj), default settings.
+- Import our OBJ in Blender with File → Import → Wavefront (.obj), default settings (keep the PNGs
+  next to the OBJ/MTL, or use the zip export).
 
 ## Layout
 
-`src/core` (pure TS, no Three.js/DOM: mesh, ops, subdivision, modifiers, IO), `src/render`
-(Three.js), `src/input` (gestures), `src/app` (operators, undo, autosave), `src/ui` (Preact).
+`src/core` (pure TS, no Three.js/DOM: mesh, ops, subdivision, modifiers, UV unwrap, IO incl. PNG),
+`src/render` (Three.js, incl. GPU texture painting), `src/input` (gestures), `src/app` (operators,
+undo, autosave), `src/ui` (Preact), `blender/addon` (the Blender extension).

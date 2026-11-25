@@ -6,6 +6,8 @@ import { Mesh, faceCenter, faceNormal } from '../mesh/mesh';
 import { buildPrimitive } from '../primitives/primitives';
 import { newMirror, newSubsurf } from '../modifiers/types';
 import { History } from '../history/history';
+import { decodePng, encodePng } from './png';
+import { sampleProject as sampleScene } from './sample';
 
 function sampleProject() {
   const p = newProject('Test');
@@ -117,7 +119,33 @@ describe('project JSON', () => {
     expect(p.objects[0].materialSlots).toEqual(['mat-default']);
     expect(p.objects[0].mesh.faceMats).toBeUndefined();
     expect(p.objects[0].mesh.colors).toBeUndefined();
-    expect(serializeProject(p).version).toBe(2);
+    expect(p.objects[0].mesh.uvs).toBeUndefined();
+    expect(p.images).toEqual([]);
+    expect(serializeProject(p).version).toBe(3);
+  });
+
+  it('round-trips UVs, the paint texture and its image (v3)', () => {
+    const p = sampleProject();
+    const o = p.objects[0];
+    o.mesh.uvs = o.mesh.faces.map((f, fi) => f.flatMap((_, i) => [fi / 10, i / 8]));
+    const rgba = new Uint8Array(4 * 4 * 4).map((_, i) => (i * 37) & 255);
+    p.images.push({ id: 'img1', name: 'Body Paint', width: 4, height: 4, png: encodePng(rgba, 4, 4) });
+    o.texture = 'img1';
+    const file = JSON.parse(JSON.stringify(serializeProject(p)));
+    expect(file.objects[0].texture).toEqual({ image: 'Body Paint', uv_map: 'UVMap', blend: 'MIX_ALPHA' });
+    expect(file.objects[0].mesh.uv_layers[0]).toMatchObject({ name: 'UVMap', domain: 'CORNER', data_type: 'FLOAT2' });
+    expect(file.objects[0].mesh.uv_layers[0].data.length).toBe(o.mesh.faces.reduce((n, f) => n + f.length, 0));
+    expect(file.objects[1].mesh.uv_layers).toEqual([]);
+    expect(file.objects[1].texture).toBeNull();
+    const back = deserializeProject(file);
+    expect(back.objects[0].mesh.uvs).toEqual(o.mesh.uvs);
+    expect(back.images[0].name).toBe('Body Paint');
+    expect(back.objects[0].texture).toBe(back.images[0].id);
+    expect(decodePng(back.images[0].png).rgba).toEqual(rgba);
+    // Autosave form: no bytes inline, supplied separately.
+    const slim = serializeProject(p, { embedImages: false });
+    expect(slim.images[0].data).toBeUndefined();
+    expect(deserializeProject(slim, () => p.images[0].png).images[0].png).toBe(p.images[0].png);
   });
 
   it('rejects files from other apps and newer versions', () => {
@@ -152,5 +180,41 @@ describe('history', () => {
     const h = new History(3);
     for (let i = 0; i < 10; i++) h.push({ label: String(i), bytes: 1, undo() {}, redo() {} });
     expect(h.size).toBe(3);
+  });
+});
+
+describe('OBJ UVs and textures', () => {
+  it('writes vt per corner and map_Kd for painted objects (also with Apply Mirror)', () => {
+    const p = sampleScene();
+    const body = p.objects[0];
+    const { obj, mtl } = exportObj(p, { textureFiles: { [body.id]: 'body.png' } });
+    const parsed = parseObj(obj);
+    expect(parsed[0].uvs!.length).toBe(body.mesh.faces.length);
+    parsed[0].uvs!.forEach((u, f) => u.forEach((x, i) => expect(x).toBeCloseTo(body.mesh.uvs![f][i], 5)));
+    expect(parsed[1].uvs).toBeUndefined();
+    expect(mtl).toMatch(/newmtl Material \(Character Body\)\n[^]*?map_Kd body\.png/);
+    expect(mtl).toMatch(/newmtl Shirt \(Character Body\)/);
+    expect(mtl).toMatch(/newmtl Material\n/); // the unpainted objects keep the plain material
+    const mirrored = parseObj(exportObj(p, { applyMirror: true, textureFiles: { [body.id]: 'body.png' } }).obj)[0];
+    expect(mirrored.uvs!.length).toBe(mirrored.faces.length);
+    expect(mirrored.faces.length).toBe(body.mesh.faces.length * 2);
+  });
+
+  it('drops images no object uses any more', () => {
+    const p = sampleScene();
+    p.objects[0].texture = undefined;
+    expect(serializeProject(p).images).toEqual([]);
+  });
+});
+
+describe('PNG', () => {
+  it('encodes and decodes RGBA exactly', () => {
+    const w = 37, h = 11;
+    const rgba = new Uint8Array(w * h * 4).map((_, i) => (i * 7919 + (i >> 5)) & 255);
+    const png = encodePng(rgba, w, h);
+    expect([...png.subarray(1, 4)].map((c) => String.fromCharCode(c)).join('')).toBe('PNG');
+    const d = decodePng(png);
+    expect([d.width, d.height]).toEqual([w, h]);
+    expect(d.rgba).toEqual(rgba);
   });
 });

@@ -1014,6 +1014,41 @@ input {
   }
 }
 
+.paint-target {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 6px;
+}
+.paint-target .segmented {
+  flex: 1;
+}
+.paint-target .seg {
+  flex: 1;
+}
+.newtexture {
+  padding: 8px 0 12px;
+}
+.newtexture p {
+  margin: 4px 0 10px;
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+.newtexture .texsize {
+  align-items: center;
+}
+.newtexture .texsize .field-label {
+  min-width: 64px;
+}
+.newtexture .texsize .segmented {
+  flex: 1;
+}
+.newtexture .texsize .seg {
+  flex: 1;
+}
+
 /* --- Popover (Select menu) ---------------------------------------------------------------- */
 
 .popover {

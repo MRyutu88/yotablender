@@ -8,6 +8,23 @@ import type { Mesh } from '../mesh/mesh';
 import type { Modifier, MirrorModifier, SubsurfModifier } from './types';
 import { buildMirrorPlan, evaluateMirror, mirrorPlanStale, type MirrorPlan } from './mirror';
 import { buildSubdivPlan, computeNormals, evaluateSubdiv, triangulate, type SubdivPlan } from '../subdiv/catmullClark';
+import { mirrorCornerUVs, splitByUV, subdivideCornerUVs } from '../uv/stackUV';
+
+/**
+ * The evaluated surface split at UV seams, for drawing with a texture: every render vertex is
+ * an evaluated vertex with one UV. Positions/normals/colors are gathered from the evaluated
+ * vertices on every evaluation.
+ */
+export interface RenderMesh {
+  nR: number;
+  vert: Uint32Array;
+  uv: Float32Array;
+  /** Triangles over render vertices, in the same order (and groups) as EvalResult.tris. */
+  tris: Uint32Array;
+  positions: Float32Array;
+  normals: Float32Array;
+  colors: Float32Array | null;
+}
 
 export interface EvalResult {
   nV: number;
@@ -25,6 +42,10 @@ export interface EvalResult {
   colors: Float32Array | null;
   /** Changes when `colors` change (so the renderer only re-uploads then). */
   colorKey: number;
+  /** Final corner UVs per face (parallel to `faces`), when the mesh has UVs. */
+  cornerUVs: number[][] | null;
+  /** The surface split at UV seams, when the mesh has UVs. */
+  render: RenderMesh | null;
   /** Milliseconds spent: plan rebuild (0 when cached) and per-frame evaluation. */
   buildMs: number;
   evalMs: number;
@@ -60,6 +81,7 @@ export class StackEvaluator {
       mesh.topoVersion +
       '|' +
       (mesh.colors ? 'C' : '') +
+      (mesh.uvs ? 'U' : '') +
       '|' +
       active
         .map((m) =>
@@ -97,6 +119,7 @@ export class StackEvaluator {
     let nV = mesh.vertCount, faces = mesh.faces, loose = mesh.looseEdges;
     // Which cage face every current face came from (for per-face materials).
     let faceSrc: Int32Array = Int32Array.from(faces, (_, i) => i);
+    let uvs: number[][] | null = mesh.uvs ?? null;
     const stages: Stage[] = [];
     const buffers: Float64Array[] = [];
     let curPos: ArrayLike<number> = mesh.positions;
@@ -113,6 +136,7 @@ export class StackEvaluator {
         nV = plan.nOut;
         faces = plan.faces;
         faceSrc = Int32Array.from(plan.faceSrc, (f) => faceSrc[f]);
+        if (uvs) uvs = mirrorCornerUVs(uvs, plan.faceSrc, plan.faceRev);
         loose = plan.looseEdges;
       } else {
         const levels = levelOf(m);
@@ -129,6 +153,7 @@ export class StackEvaluator {
           for (let k = 0; k < f.length * per; k++) src.push(faceSrc[fi]);
         });
         faceSrc = Int32Array.from(src);
+        if (uvs) for (let l = 0; l < levels; l++) uvs = subdivideCornerUVs(uvs);
         nV = plan.nFinal;
         faces = plan.faces;
         loose = plan.looseEdges;
@@ -137,6 +162,12 @@ export class StackEvaluator {
     // Triangles sorted by material slot, one draw group per slot.
     const slotOf = (f: number) => mesh.faceMats?.[faceSrc[f]] ?? 0;
     let tris = triangulate(faces);
+    // The same triangles over face corners (for the UV split).
+    let cornerTris: Uint32Array | null = null;
+    if (uvs) {
+      let c = 0;
+      cornerTris = triangulate(faces.map((f) => f.map(() => c++)));
+    }
     const groups: EvalResult['groups'] = [];
     const slots = new Set<number>(faces.map((_, f) => slotOf(f)));
     if (slots.size <= 1) {
@@ -147,9 +178,13 @@ export class StackEvaluator {
         for (let k = 0; k < f.length - 2; k++) triFace.push(fi);
       });
       const order = triFace.map((_, t) => t).sort((a, b) => slotOf(triFace[a]) - slotOf(triFace[b]));
-      const sorted = new Uint32Array(tris.length);
-      order.forEach((t, i) => sorted.set(tris.subarray(t * 3, t * 3 + 3), i * 3));
-      tris = sorted;
+      const reorder = (src: Uint32Array) => {
+        const sorted = new Uint32Array(src.length);
+        order.forEach((t, i) => sorted.set(src.subarray(t * 3, t * 3 + 3), i * 3));
+        return sorted;
+      };
+      tris = reorder(tris);
+      if (cornerTris) cornerTris = reorder(cornerTris);
       let start = 0;
       for (let i = 1; i <= order.length; i++) {
         if (i === order.length || slotOf(triFace[order[i]]) !== slotOf(triFace[order[start]])) {
@@ -157,6 +192,19 @@ export class StackEvaluator {
           start = i;
         }
       }
+    }
+    let render: RenderMesh | null = null;
+    if (uvs && cornerTris) {
+      const sp = splitByUV(faces, uvs, nV);
+      render = {
+        nR: sp.nR,
+        vert: sp.vert,
+        uv: sp.uv,
+        tris: cornerTris.map((c) => sp.cornerVert[c]),
+        positions: new Float32Array(sp.nR * 3),
+        normals: new Float32Array(sp.nR * 3),
+        colors: mesh.colors ? new Float32Array(sp.nR * 3) : null,
+      };
     }
     return {
       key,
@@ -175,6 +223,8 @@ export class StackEvaluator {
         groups,
         colors: mesh.colors ? new Float32Array(nV * 3) : null,
         colorKey: 0,
+        cornerUVs: uvs,
+        render,
         buildMs: 0,
         evalMs: 0,
       },
@@ -208,6 +258,22 @@ export class StackEvaluator {
       const co = chain.result.colors;
       for (let i = 0; i < co.length; i++) co[i] = Math.min(1, Math.max(0, c[i]));
       chain.result.colorKey++;
+      const rm = chain.result.render;
+      if (rm?.colors) gather(rm.vert, co, rm.colors);
     }
+    const rm = chain.result.render;
+    if (rm) {
+      gather(rm.vert, out, rm.positions);
+      gather(rm.vert, chain.result.normals, rm.normals);
+    }
+  }
+}
+
+function gather(vert: Uint32Array, src: Float32Array, dst: Float32Array): void {
+  for (let r = 0; r < vert.length; r++) {
+    const s = vert[r] * 3, d = r * 3;
+    dst[d] = src[s];
+    dst[d + 1] = src[s + 1];
+    dst[d + 2] = src[s + 2];
   }
 }

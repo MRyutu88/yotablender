@@ -23,6 +23,11 @@ export interface MeshData {
   faceMats?: number[];
   /** Color attribute, RGBA per vertex (Blender's default "Color", Vertex domain). Linear 0..1. */
   colors?: number[];
+  /**
+   * UVs per face corner, parallel to `faces`: uvs[f] = [u0, v0, u1, v1, …] for the corners of
+   * face f in order (Blender's "UVMap", Face Corner domain). Absent = not unwrapped.
+   */
+  uvs?: number[][];
 }
 
 export class Mesh implements MeshData {
@@ -31,6 +36,7 @@ export class Mesh implements MeshData {
   looseEdges: Edge[];
   faceMats?: number[];
   colors?: number[];
+  uvs?: number[][];
   /** Bumped whenever faces/edges/vertex count change. Caches (topology, subdivision plans) key on it. */
   topoVersion = 0;
   /** Bumped whenever any vertex position changes. */
@@ -46,6 +52,7 @@ export class Mesh implements MeshData {
     this.looseEdges = data.looseEdges;
     this.faceMats = data.faceMats;
     this.colors = data.colors;
+    this.uvs = data.uvs;
   }
 
   get vertCount(): number {
@@ -67,6 +74,7 @@ export class Mesh implements MeshData {
     this.looseEdges = data.looseEdges;
     this.faceMats = data.faceMats;
     this.colors = data.colors;
+    this.uvs = data.uvs;
     this.topoVersion++;
     this.posVersion++;
     this.colorVersion++;
@@ -109,6 +117,7 @@ export function cloneData(d: MeshData): MeshData {
   };
   if (d.faceMats) out.faceMats = d.faceMats.slice();
   if (d.colors) out.colors = d.colors.slice();
+  if (d.uvs) out.uvs = d.uvs.map((u) => u.slice());
   return out;
 }
 
@@ -134,23 +143,38 @@ export function lerpColor(d: MeshData, a: number, b: number, t: number): number[
   return [0, 1, 2, 3].map((k) => c[a * 4 + k] + (c[b * 4 + k] - c[a * 4 + k]) * t);
 }
 
-/** Appends a face with the material of face `like` (or slot `like` when `isSlot`). */
-export function addFace(d: MeshData, face: Face, like: number, isSlot = false): void {
+/**
+ * Appends a face with the material of face `like` (or slot `like` when `isSlot`) and the given
+ * corner UVs (flat u,v per corner; zeros when the mesh has UVs and none are given).
+ */
+export function addFace(d: MeshData, face: Face, like: number, isSlot = false, uv?: number[]): void {
   if (d.faceMats) d.faceMats.push(isSlot ? like : (d.faceMats[like] ?? 0));
+  if (d.uvs) d.uvs.push(uv ?? new Array(face.length * 2).fill(0));
   d.faces.push(face);
+}
+
+/** UV of vertex `v` as a corner of face `f` (or undefined when there are no UVs / no such corner). */
+export function cornerUV(d: MeshData, f: number, v: number): [number, number] | undefined {
+  const uv = d.uvs?.[f];
+  if (!uv) return undefined;
+  const i = d.faces[f].indexOf(v);
+  return i < 0 ? undefined : [uv[i * 2], uv[i * 2 + 1]];
 }
 
 /** Keeps only the faces for which keep(i) is true, with their materials. */
 export function filterFaces(d: MeshData, keep: (i: number) => boolean): void {
   const faces: Face[] = [];
   const mats: number[] = [];
+  const uvs: number[][] = [];
   d.faces.forEach((f, i) => {
     if (!keep(i)) return;
     faces.push(f);
     if (d.faceMats) mats.push(d.faceMats[i] ?? 0);
+    if (d.uvs) uvs.push(d.uvs[i]);
   });
   d.faces = faces;
   if (d.faceMats) d.faceMats = mats;
+  if (d.uvs) d.uvs = uvs;
 }
 
 // --- Geometry helpers -------------------------------------------------------------------
@@ -247,6 +271,7 @@ export function compactVertices(
     looseEdges: data.looseEdges.map(([a, b]) => [remap[a], remap[b]] as Edge),
   };
   if (data.faceMats) out.faceMats = data.faceMats.slice();
+  if (data.uvs) out.uvs = data.uvs.map((u) => u.slice());
   if (data.colors) {
     const colors: number[] = [];
     for (let i = 0; i < n; i++) if (remap[i] >= 0) colors.push(data.colors[i * 4], data.colors[i * 4 + 1], data.colors[i * 4 + 2], data.colors[i * 4 + 3]);

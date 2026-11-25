@@ -18,6 +18,8 @@ export interface MirrorPlan {
   faces: number[][];
   /** Output face → input face it came from (for materials). */
   faceSrc: Int32Array;
+  /** Output face → 1 when its corners run in reverse order of its source face's (for UVs). */
+  faceRev: Uint8Array;
   looseEdges: [number, number][];
   /** Per input vertex, bitmask of axes it is merged on. Plan is stale when this changes. */
   mergeMask: Uint8Array;
@@ -51,6 +53,7 @@ export function buildMirrorPlan(
   }
   let curFaces = faces;
   let curSrc = faces.map((_, i) => i);
+  let curRev = faces.map(() => 0);
   let curLoose = looseEdges;
   for (let a = 0; a < 3; a++) {
     if (!mod.use_axis[a]) continue;
@@ -68,11 +71,13 @@ export function buildMirrorPlan(
     }
     const mirroredFaces: number[][] = [];
     const mirroredSrc: number[] = [];
+    const mirroredRev: number[] = [];
     curFaces.forEach((f, fi) => {
       // A face lying entirely on the plane would be duplicated onto itself: skip its copy.
       if (f.every((v) => map[v] === v)) return;
       mirroredFaces.push(f.map((v) => map[v]).reverse());
       mirroredSrc.push(curSrc[fi]);
+      mirroredRev.push(curRev[fi] ^ 1);
     });
     const mirroredLoose: [number, number][] = [];
     for (const [x, y] of curLoose) {
@@ -81,6 +86,7 @@ export function buildMirrorPlan(
     }
     curFaces = curFaces.concat(mirroredFaces);
     curSrc = curSrc.concat(mirroredSrc);
+    curRev = curRev.concat(mirroredRev);
     curLoose = curLoose.concat(mirroredLoose);
     src = nextSrc;
     flip = nextFlip;
@@ -92,6 +98,7 @@ export function buildMirrorPlan(
     nOut: src.length,
     faces: curFaces,
     faceSrc: Int32Array.from(curSrc),
+    faceRev: Uint8Array.from(curRev),
     looseEdges: curLoose,
     mergeMask,
   };

@@ -279,7 +279,16 @@ export function MenuSheet({ app, installPrompt }: { app: App; installPrompt: (()
         <IconButton icon={Icon.download({ size: 20 })} label="Export OBJ" onClick={() => void app.exportObj(applyMirror, zip)} />
         <IconButton icon={Icon.download({ size: 20 })} label="Export JSON" onClick={() => void app.saveProjectFile()} />
       </div>
-      <p class="note">OBJ is the cage (quads and n-gons kept). JSON keeps modifiers, transforms and materials for the Blender add-on.</p>
+      <p class="note">
+        OBJ is the cage (quads and n-gons kept), with UVs and a flattened PNG per painted object. JSON keeps everything (modifiers,
+        transforms, materials, vertex colors, UVs and paint) for the Blender add-on: File → Import → YotaBlender.
+      </p>
+      <div class="row gap wrap">
+        <a class="btn" href={`${import.meta.env.BASE_URL}yotablender_import.zip`} download="yotablender_import.zip">
+          {Icon.download({ size: 20 })}
+          <span class="btn-label">Blender add-on (.zip)</span>
+        </a>
+      </div>
 
       <h3 class="section">Recent projects</h3>
       <ul class="projects">
@@ -348,7 +357,7 @@ export function HelpSheet() {
     ['Tap a tool again', 'Back to the Select tool'],
     ['Double-tap an edge', 'Select its edge loop (a vertex or face: the whole piece)'],
     ['◎ chip (Edit Mode)', 'Proportional editing: nearby vertices follow; set the falloff with the slider'],
-    ['Brush mode (top bar)', 'Vertex Paint: drag to paint, Blur to soften, Pick to sample a color'],
+    ['Brush mode (top bar)', 'Paint: Vertex (Color attribute) or Texture (unwrapped, symmetric with Mirror) · Pick samples a color'],
   ];
   return (
     <Sheet title="Gestures">
@@ -370,6 +379,49 @@ export function HelpSheet() {
         {Icon.check({ size: 20 })}
         <span class="btn-label">Got it</span>
       </button>
+    </Sheet>
+  );
+}
+
+/** Texture Paint options for the active object: size, unwrap again, export, remove. */
+export function TextureSheet({ app }: { app: App }) {
+  void S.sceneRev.value;
+  const o = app.active;
+  const img = o?.texture ? app.project.images.find((i) => i.id === o.texture) : undefined;
+  return (
+    <Sheet title="Paint texture">
+      {o && img ? (
+        <>
+          <p class="note">
+            <b>{img.name}</b> · {img.width}×{img.height} px · painted over the colors of <b>{o.name}</b>. Mirror halves share their UVs, so
+            painting is symmetric.
+          </p>
+          <div class="row gap wrap">
+            <IconButton icon={Icon.share({ size: 20 })} label="Export PNG" onClick={() => void app.exportTexturePng()} />
+            <IconButton
+              icon={Icon.sphere({ size: 20 })}
+              label="Unwrap again"
+              onClick={() => {
+                if (confirm('Unwrap again? The islands move, so the paint is cleared (Undo brings it back).')) app.reunwrap();
+              }}
+            />
+            <IconButton
+              icon={Icon.trash({ size: 20 })}
+              label="Remove"
+              onClick={() => {
+                app.removePaintTexture();
+                S.sheet.value = null;
+              }}
+            />
+          </div>
+          <p class="note">
+            The Blender add-on brings the texture in packed, mixed over the base color by its alpha. OBJ export writes a flattened PNG
+            (paint over colors) per painted object.
+          </p>
+        </>
+      ) : (
+        <p class="note">This object has no paint texture.</p>
+      )}
     </Sheet>
   );
 }
