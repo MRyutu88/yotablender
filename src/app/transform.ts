@@ -73,6 +73,11 @@ export class TransformSession {
     target: { objects: SceneObject[] } | { edit: EditTarget },
     pivot: Vec3,
     private snap: SnapOptions,
+    /**
+     * Scrub mode (sliding along an X/Y/Z chip): the finger's sideways travel is the value itself,
+     * independent of where the pivot is on screen. Right/up = positive.
+     */
+    readonly scrub = false,
   ) {
     this.pivot = pivot;
     this.virt = { ...start };
@@ -96,6 +101,7 @@ export class TransformSession {
     this.virt.x += (p.x - this.last.x) * k;
     this.virt.y += (p.y - this.last.y) * k;
     this.last = { ...p };
+    if (this.scrub) return this.updateScrub();
     if (this.kind === 'move') this.applyMove(this.computeMove());
     else if (this.kind === 'rotate') this.applyRotate(this.computeAngle());
     else this.applyScale(this.computeScale());
@@ -108,6 +114,36 @@ export class TransformSession {
       if (d) this.applyMove([d[0] * v, d[1] * v, d[2] * v]);
     } else if (this.kind === 'rotate') this.applyRotate((v * Math.PI) / 180);
     else this.applyScale(v);
+  }
+
+  private updateScrub(): void {
+    const s = this.virt.x - this.start.x - (this.virt.y - this.start.y);
+    const c = this.constraint;
+    const axisName = c ? (c.kind === 'dir' ? c.label : c.kind === 'plane' ? `not ${'XYZ'[c.axis]}` : 'XYZ'[c.axis]) : '';
+    if (this.kind === 'move') {
+      const dir = this.constraintDir() ?? AXES[0];
+      // One pixel = one pixel's worth of distance at the pivot, so it feels like dragging it.
+      let t = s * worldPerPixelAt(this.cam, new THREE.Vector3(...this.pivot));
+      if (this.snap.enabled) t = Math.round(t / this.snap.move) * this.snap.move;
+      this.value = t;
+      this.label = `${axisName}  ${fmt(t)}`;
+      this.applyMove([dir[0] * t, dir[1] * t, dir[2] * t]);
+    } else if (this.kind === 'rotate') {
+      let angle = s * 0.01; // ≈ 0.57° per pixel
+      if (this.snap.enabled) {
+        const inc = (this.snap.rotateDeg * Math.PI) / 180;
+        angle = Math.round(angle / inc) * inc;
+      }
+      this.value = (angle * 180) / Math.PI;
+      this.label = `${fmt(this.value, 1)}°  ${axisName}`;
+      this.applyRotate(angle);
+    } else {
+      let f = Math.exp(s / 160);
+      if (this.snap.enabled) f = Math.max(this.snap.scale, Math.round(f / this.snap.scale) * this.snap.scale);
+      this.value = f;
+      this.label = `×${fmt(f, 3)}  ${axisName}`;
+      this.applyScale(f);
+    }
   }
 
   private constraintDir(): Vec3 | null {

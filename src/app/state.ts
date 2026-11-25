@@ -19,7 +19,7 @@ export type Constraint =
   | { kind: 'dir'; dir: Vec3; label: string };
 
 export interface AdjustLast {
-  kind: 'primitive' | 'extrude' | 'loopcut' | 'inset';
+  kind: 'primitive' | 'extrude' | 'loopcut' | 'inset' | 'subdivide';
   title: string;
   /** For primitives: the type, so the panel knows which parameters to show. */
   primitive?: PrimitiveType;

@@ -9,6 +9,7 @@ import { MaterialsSheet } from './materials';
 import { hexToLinear, linearToHex, SWATCHES } from './color';
 import { PRIMITIVE_PARAM_SPECS, type PrimitiveType } from '../core/primitives/primitives';
 import type { ViewName } from '../render/camera';
+import type { TransformKind } from '../app/transform';
 
 export function Ui({ app, installPrompt }: { app: App; installPrompt: (() => void) | null }) {
   void S.sceneRev.value;
@@ -114,6 +115,23 @@ function AdjustLastPanel({ app }: { app: App }) {
     ));
   } else if (a.kind === 'extrude') {
     body = [<Stepper key="o" label="Offset" value={a.values.offset} min={-100} max={100} step={0.05} onChange={(v) => app.setExtrudeOffset(v)} />];
+  } else if (a.kind === 'subdivide') {
+    body = [
+      <Stepper key="c" label="Cuts" value={a.values.cuts} min={1} max={16} step={1} int onChange={(v) => app.adjustOp({ ...a.values, cuts: v })} />,
+      <div key="d" class="adjust-row">
+        <span>Direction</span>
+        <Segmented
+          value={String(a.values.axis)}
+          onChange={(v) => app.adjustOp({ ...a.values, axis: Number(v) })}
+          options={[
+            { value: '-1', label: 'All', title: 'Cut every edge (even grid)' },
+            { value: '0', label: 'X', title: 'Cut only edges along X' },
+            { value: '1', label: 'Y', title: 'Cut only edges along Y' },
+            { value: '2', label: 'Z', title: 'Cut only edges along Z (horizontal slices)' },
+          ]}
+        />
+      </div>,
+    ];
   } else if (a.specs) {
     body = Object.entries(a.specs).map(([k, spec]) => (
       <Stepper
@@ -403,6 +421,49 @@ function BottomBars({ app }: { app: App }) {
     else S.constraint.value = c?.kind === 'axis' && c.axis === axis ? null : { kind: 'axis', axis };
     S.haptic(6);
   };
+  // Sliding a finger along an X/Y/Z chip moves/rotates/scales the selection along that axis
+  // (a tap still toggles the lock). The lock is shown while sliding and restored afterwards.
+  const scrub = useRef<{ id: number; axis: 0 | 1 | 2; x0: number; y0: number; active: boolean; prev: S.Constraint | null } | null>(null);
+  const eatClick = useRef(false);
+  const chipDown = (axis: 0 | 1 | 2) => (e: PointerEvent) => {
+    eatClick.current = false;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
+    scrub.current = { id: e.pointerId, axis, x0: e.clientX, y0: e.clientY, active: false, prev: S.constraint.value };
+  };
+  const chipMove = (e: PointerEvent) => {
+    const s = scrub.current;
+    if (!s || s.id !== e.pointerId) return;
+    if (!s.active) {
+      if (Math.hypot(e.clientX - s.x0, e.clientY - s.y0) < 8) return;
+      const kind = S.tool.value as TransformKind;
+      // Scale keeps a "not this axis" plane lock if that is what the chip shows.
+      const constraint: S.Constraint = kind === 'scale' && s.prev?.kind === 'plane' && s.prev.axis === s.axis ? s.prev : { kind: 'axis', axis: s.axis };
+      if (!app.beginTransform(kind, s.x0, s.y0, null, { constraint, scrub: true })) {
+        scrub.current = null;
+        eatClick.current = true;
+        S.toast('Select something first', 'error');
+        return;
+      }
+      s.active = true;
+      S.constraint.value = constraint;
+      S.haptic(6);
+    }
+    app.updateTransform(e.clientX, e.clientY, e.shiftKey);
+  };
+  const chipUp = (cancelled: boolean) => (e: PointerEvent) => {
+    const s = scrub.current;
+    if (!s || s.id !== e.pointerId) return;
+    scrub.current = null;
+    if (!s.active) return; // a tap: onClick toggles the lock
+    eatClick.current = true;
+    app.endTransform(cancelled);
+    S.constraint.value = s.prev;
+  };
   return (
     <div class="bottom">
       {edit && isT && S.propEnabled.value && <PropBar app={app} />}
@@ -444,8 +505,18 @@ function BottomBars({ app }: { app: App }) {
                 <button
                   key={a}
                   class={`chip axis axis-${a.toLowerCase()} ${on ? 'active' : ''} ${plane ? 'plane' : ''}`}
-                  aria-label={`${plane ? 'Plane without' : 'Lock to'} ${a}`}
-                  onClick={() => axisChip(i as 0 | 1 | 2)}
+                  aria-label={`${plane ? 'Plane without' : 'Lock to'} ${a}; slide to transform along ${a}`}
+                  onPointerDown={chipDown(i as 0 | 1 | 2)}
+                  onPointerMove={chipMove}
+                  onPointerUp={chipUp(false)}
+                  onPointerCancel={chipUp(true)}
+                  onClick={() => {
+                    if (eatClick.current) {
+                      eatClick.current = false;
+                      return;
+                    }
+                    axisChip(i as 0 | 1 | 2);
+                  }}
                 >
                   {plane ? `⊥${a}` : a}
                 </button>
@@ -478,6 +549,7 @@ function BottomBars({ app }: { app: App }) {
             <IconButton icon={Icon.extrude()} label="Extrude" onClick={() => app.extrude()} />
             <IconButton icon={Icon.inset()} label="Inset" onClick={() => app.inset()} />
             <IconButton icon={Icon.loopcut()} label="Loop Cut" onClick={() => app.loopCut()} />
+            <IconButton icon={Icon.subdivide()} label="Subdivide" onClick={() => app.subdivide()} />
             <IconButton icon={Icon.select()} label="Select" active={S.popover.value === 'select'} onClick={() => (S.popover.value = S.popover.value ? null : 'select')} />
             <IconButton icon={Icon.merge()} label="Merge" onClick={() => app.mergeCenter()} />
             <IconButton icon={Icon.mergeDist()} label="By dist." onClick={() => app.mergeDistance()} />

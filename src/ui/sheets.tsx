@@ -343,7 +343,7 @@ export function MenuSheet({ app, installPrompt }: { app: App; installPrompt: (()
 
 export function HelpSheet() {
   const rows: [string, string][] = [
-    ['1 finger drag', 'Orbit (Select tool) · transform (Move/Rotate/Scale)'],
+    ['1 finger drag', 'Orbit · with Move/Rotate/Scale: on the model = transform, on empty space = orbit'],
     ['2 fingers', 'Pan and pinch to zoom'],
     ['Tap', 'Select (tap empty space to deselect)'],
     ['Touch & hold (Edit Mode)', 'Magnifier: slide to the exact vertex, lift to select'],
@@ -351,7 +351,7 @@ export function HelpSheet() {
     ['3-finger tap', 'Redo'],
     ['2nd finger while dragging', 'Precision: 10× slower'],
     ['＋ / − chips', 'Add to / remove from the selection'],
-    ['X Y Z chips', 'Tap: lock to an axis · double-tap: lock to the other two'],
+    ['X Y Z chips', 'Tap: lock to an axis · double-tap: lock to the other two · slide along a chip: move/rotate/scale along that axis'],
     ['Gizmo handles', 'Drag an arrow, ring or square to constrain'],
     ['Nav ball (top right)', 'Drag to orbit · tap an axis for that view'],
     ['Tap a tool again', 'Back to the Select tool'],

@@ -5,3 +5,4 @@ export { loopCut } from './loopcut';
 export { inset } from './inset';
 export { selectLinked, selectLoop, selectRing, edgeLoop, edgeRing } from './select';
 export { OpError, type OpResult } from './opResult';
+export { subdivide, type SubdivideAxis } from './subdivide';
