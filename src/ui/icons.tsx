@@ -73,6 +73,7 @@ export const Icon = {
   symmetry: (p?: P) => I([<path d="M12 3v18" stroke-dasharray="2.5 2.5" />, <path d="M9 7 3 17h6zM15 7l6 10h-6z" />], p),
   falloff: (p?: P) => I([<circle cx="12" cy="12" r="9" stroke-dasharray="2.5 2.5" />, <circle cx="12" cy="12" r="4.5" />, <circle cx="12" cy="12" r="1" fill="currentColor" />], p),
   loopcut: (p?: P) => I([<rect x="4" y="4" width="16" height="16" rx="2" />, <path d="M12 4v16" stroke-dasharray="2.5 2" />], p),
+  cut: (p?: P) => I([<circle cx="6" cy="6" r="2.6" />, <circle cx="6" cy="18" r="2.6" />, <path d="M8.2 7.6 20 17M8.2 16.4 20 7" />], p),
   subdivide: (p?: P) => I([<rect x="4" y="4" width="16" height="16" rx="2" />, <path d="M12 4v16M4 12h16" stroke-dasharray="2.5 2" />], p),
   inset: (p?: P) => I([<rect x="3" y="3" width="18" height="18" rx="1.5" />, <rect x="8" y="8" width="8" height="8" rx="1" />, <path d="M3 3l5 5M21 3l-5 5M3 21l5-5M21 21l-5-5" />], p),
   linked: (p?: P) => I([<circle cx="7" cy="7" r="3" />, <circle cx="17" cy="17" r="3" />, <path d="M9.5 9.5l5 5" />], p),

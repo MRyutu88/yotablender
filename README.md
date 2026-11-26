@@ -14,11 +14,20 @@ A touch-first low-poly character modeler for phones (an installable PWA) with a 
 
 ## What it does
 
+- **Wheels** (Object and Edit Mode): the round button on the left opens the actions wheel
+  (Edit: Mesh, Merge, Select, Delete, Material, Modifiers, Item; Object: Add, Objects,
+  Duplicate, Delete, Material, Modifiers, Item, Select All); the one on the right picks the tool
+  (Select, Box, Lasso, Move, Rotate, Scale). Tap to open and tap a slice, or press, slide
+  toward a category, keep sliding onto a tool and lift. The last three actions sit above the
+  left button.
 - **Object Mode:** primitives (cube, quad sphere, UV sphere, cylinder, cone, torus, plane) and a
   "Character start" (half box with Mirror + Subdivision); move/rotate/scale, duplicate, outliner.
 - **Edit Mode** (vertex / edge / face): extrude, inset, loop cut, merge, delete; select
   linked / loop / ring (double-tap an edge for its loop); proportional editing.
-- **Symmetry** (Edit Mode → Symmetry): live symmetry per local X/Y/Z axis (moving a vertex moves
+- **Cut** (Edit Mode): with the Cut tool on, swipe across the mesh where the new loop should go.
+  A yellow preview shows the loop; lifting the finger cuts it through the middle of the first
+  ring of quads the swipe crossed (Adjust Last still offers cuts and slide).
+- **Symmetry** (Edit Mode, the X/Y/Z rail on the right; its icon opens Symmetrize): live symmetry per local X/Y/Z axis (moving a vertex moves
   its mirror image; vertices on the plane stay on it), and **Symmetrize** to make a lopsided
   mesh symmetric by copying one side onto the other (+X → −X or −X → +X, same for Y/Z; faces
   crossing the plane are cut). Live symmetry is saved with the object and imported into

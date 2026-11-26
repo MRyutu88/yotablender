@@ -6,6 +6,7 @@ import { Icon } from './icons';
 import { IconButton, Segmented, Stepper } from './widgets';
 import { AddSheet, HelpSheet, ItemSheet, MenuSheet, ModifiersSheet, OutlinerSheet, TextureSheet } from './sheets';
 import { MaterialsSheet } from './materials';
+import { Wheels } from './wheel';
 import { hexToLinear, linearToHex, SWATCHES } from './color';
 import { PRIMITIVE_PARAM_SPECS, type PrimitiveType } from '../core/primitives/primitives';
 import type { ViewName } from '../render/camera';
@@ -28,9 +29,9 @@ export function Ui({ app, installPrompt }: { app: App; installPrompt: (() => voi
       {sheet === 'help' && <HelpSheet />}
       {sheet === 'materials' && <MaterialsSheet app={app} />}
       {sheet === 'texture' && <TextureSheet app={app} />}
-      <SelectPopover app={app} />
       <SymmetryPopover app={app} />
       <Marquee />
+      <CutStroke />
       <PropCircle />
       <BrushCursor />
       <Loupe app={app} />
@@ -196,6 +197,35 @@ function NavPanel({ app }: { app: App }) {
       >
         {cam.ortho ? 'Orth' : 'Per'}
       </button>
+      {S.mode.value === 'edit' && <SymmetryRail app={app} />}
+    </div>
+  );
+}
+
+/** Live symmetry, always at hand in Edit Mode: X/Y/Z toggles; the icon opens Symmetrize. */
+function SymmetryRail({ app }: { app: App }) {
+  void S.sceneRev.value;
+  const sym = app.symmetryAxes();
+  return (
+    <div class={`symrail ${sym.some(Boolean) ? 'on' : ''}`} role="group" aria-label="Live symmetry">
+      <button
+        class={`btn small sym-icon ${S.popover.value === 'symmetry' ? 'active' : ''}`}
+        aria-label="Symmetry options (Symmetrize)"
+        onClick={() => (S.popover.value = S.popover.value === 'symmetry' ? null : 'symmetry')}
+      >
+        {Icon.symmetry({ size: 20 })}
+      </button>
+      {(['X', 'Y', 'Z'] as const).map((n, i) => (
+        <button
+          key={n}
+          class={`btn small text sym-axis axis-${n.toLowerCase()} ${sym[i] ? 'active' : ''}`}
+          aria-pressed={sym[i]}
+          aria-label={`Live symmetry across ${n}`}
+          onClick={() => app.toggleSymmetry(i as 0 | 1 | 2)}
+        >
+          {n}
+        </button>
+      ))}
     </div>
   );
 }
@@ -404,16 +434,9 @@ function BrushCursor() {
 function BottomBars({ app }: { app: App }) {
   if (S.mode.value === 'paint') return <PaintBars app={app} />;
   const edit = S.mode.value === 'edit';
-  const t = S.tool.value;
   const isT = S.isTransformTool.value;
-  const setTool = (id: S.ToolId) => {
-    // Tapping the active tool again returns to Select (quick toggle).
-    S.tool.value = S.tool.value === id && id !== 'select' ? 'select' : id;
-    if (S.tool.value !== 'move') S.hint.value = null;
-  };
   const c = S.constraint.value;
   void S.sceneRev.value;
-  const sym = edit ? app.symmetryAxes() : [false, false, false];
   const lastTap = useRef<{ axis: number; t: number }>({ axis: -1, t: 0 });
   const axisChip = (axis: 0 | 1 | 2) => {
     const now = performance.now();
@@ -520,16 +543,6 @@ function BottomBars({ app }: { app: App }) {
                 </button>
               );
             })}
-            {edit && sym.some(Boolean) && (
-              <button
-                class="chip active"
-                aria-label={`Live symmetry on ${sym.map((on, i) => (on ? 'XYZ'[i] : '')).join('')}; tap for symmetry options`}
-                onClick={() => (S.popover.value = S.popover.value === 'symmetry' ? null : 'symmetry')}
-              >
-                {Icon.symmetry({ size: 18 })}
-                {sym.map((on, i) => (on ? 'XYZ'[i] : '')).join('')}
-              </button>
-            )}
             {isT && edit && (
               <button
                 class={`chip ${S.propEnabled.value ? 'active' : ''}`}
@@ -552,47 +565,7 @@ function BottomBars({ app }: { app: App }) {
             )}
           </>
       </div>
-      <nav class="actions" aria-label="Actions">
-        {edit ? (
-          <>
-            <IconButton icon={Icon.extrude()} label="Extrude" onClick={() => app.extrude()} />
-            <IconButton icon={Icon.inset()} label="Inset" onClick={() => app.inset()} />
-            <IconButton icon={Icon.loopcut()} label="Loop Cut" onClick={() => app.loopCut()} />
-            <IconButton icon={Icon.subdivide()} label="Subdivide" onClick={() => app.subdivide()} />
-            <IconButton icon={Icon.select()} label="Select" active={S.popover.value === 'select'} onClick={() => (S.popover.value = S.popover.value ? null : 'select')} />
-            <IconButton icon={Icon.merge()} label="Merge" onClick={() => app.mergeCenter()} />
-            <IconButton icon={Icon.mergeDist()} label="By dist." onClick={() => app.mergeDistance()} />
-            <IconButton icon={Icon.symmetry()} label="Symmetry" active={S.popover.value === 'symmetry'} onClick={() => (S.popover.value = S.popover.value === 'symmetry' ? null : 'symmetry')} />
-            <IconButton icon={Icon.trash()} label="Delete" onClick={() => app.deleteElements()} />
-            <IconButton icon={Icon.palette()} label="Material" active={S.sheet.value === 'materials'} onClick={() => toggleSheet('materials')} />
-            <IconButton icon={Icon.wrench()} label="Modifiers" active={S.sheet.value === 'modifiers'} onClick={() => toggleSheet('modifiers')} />
-            <IconButton icon={Icon.sliders()} label="Item" active={S.sheet.value === 'item'} onClick={() => toggleSheet('item')} />
-          </>
-        ) : (
-          <>
-            <IconButton icon={Icon.plus()} label="Add" active={S.sheet.value === 'add'} onClick={() => toggleSheet('add')} />
-            <IconButton icon={Icon.wrench()} label="Modifiers" active={S.sheet.value === 'modifiers'} onClick={() => toggleSheet('modifiers')} />
-            <IconButton icon={Icon.palette()} label="Material" active={S.sheet.value === 'materials'} onClick={() => toggleSheet('materials')} />
-            <IconButton icon={Icon.list()} label="Objects" active={S.sheet.value === 'outliner'} onClick={() => toggleSheet('outliner')} />
-            <IconButton icon={Icon.duplicate()} label="Duplicate" onClick={() => app.duplicateSelected()} />
-            <IconButton icon={Icon.trash()} label="Delete" onClick={() => app.deleteSelectedObjects()} />
-            <IconButton icon={Icon.sliders()} label="Item" active={S.sheet.value === 'item'} onClick={() => toggleSheet('item')} />
-            <IconButton icon={Icon.all()} label="All" onClick={() => app.selectAllToggle('all')} />
-          </>
-        )}
-      </nav>
-      <nav class="tools" aria-label="Tools">
-        <IconButton icon={Icon.select()} label="Select" active={t === 'select'} onClick={() => setTool('select')} />
-        <IconButton
-          icon={t === 'lasso' ? Icon.lasso() : Icon.box()}
-          label={t === 'lasso' ? 'Lasso' : 'Box'}
-          active={t === 'box' || t === 'lasso'}
-          onClick={() => (S.tool.value = t === 'box' ? 'lasso' : t === 'lasso' ? 'select' : 'box')}
-        />
-        <IconButton icon={Icon.move()} label="Move" active={t === 'move'} onClick={() => setTool('move')} />
-        <IconButton icon={Icon.rotate()} label="Rotate" active={t === 'rotate'} onClick={() => setTool('rotate')} />
-        <IconButton icon={Icon.scale()} label="Scale" active={t === 'scale'} onClick={() => setTool('scale')} />
-      </nav>
+      <Wheels app={app} />
     </div>
   );
 }
@@ -626,25 +599,6 @@ function PropCircle() {
     <svg class="propcircle" width="100%" height="100%">
       <circle cx={c.x} cy={c.y} r={c.r} />
     </svg>
-  );
-}
-
-function SelectPopover({ app }: { app: App }) {
-  if (S.popover.value !== 'select' || S.mode.value !== 'edit') return null;
-  const run = (fn: () => void) => () => {
-    fn();
-    S.popover.value = null;
-  };
-  return (
-    <div class="popover" role="menu" aria-label="Select">
-      <IconButton icon={Icon.all()} label="All" onClick={run(() => app.selectAllToggle('all'))} />
-      <IconButton icon={Icon.none()} label="None" onClick={run(() => app.selectAllToggle('none'))} />
-      <IconButton icon={Icon.invert()} label="Invert" onClick={run(() => app.selectAllToggle('invert'))} />
-      <IconButton icon={Icon.linked()} label="Linked" onClick={run(() => app.selectSpecial('linked'))} />
-      <IconButton icon={Icon.loop()} label="Loop" onClick={run(() => app.selectSpecial('loop'))} />
-      <IconButton icon={Icon.ring()} label="Ring" onClick={run(() => app.selectSpecial('ring'))} />
-      <p class="note">Tip: double-tap an edge for its loop, a vertex or face for the whole piece.</p>
-    </div>
   );
 }
 
@@ -722,6 +676,21 @@ function Marquee() {
   return (
     <svg class={`marquee op-${S.pickOp.value}`} width="100%" height="100%">
       {shape}
+    </svg>
+  );
+}
+
+/** Cut tool: the finger's stroke and, in yellow, the loop that releasing would cut. */
+function CutStroke() {
+  const c = S.cutStroke.value;
+  if (!c) return null;
+  const pts = (l: [number, number][]) => l.map((p) => p.join(',')).join(' ');
+  return (
+    <svg class="cutstroke" width="100%" height="100%">
+      {c.loops.map((l, i) => (
+        <polyline key={i} class="loop" points={pts(l)} />
+      ))}
+      <polyline class="stroke" points={pts(c.points)} />
     </svg>
   );
 }
