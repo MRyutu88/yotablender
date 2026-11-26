@@ -293,3 +293,125 @@ function area2(P: number[], v: number[]): number {
   }
   return x * x + y * y + z * z;
 }
+
+/** Largest angle between the two triangles' normals for them to become one quad (Blender's default). */
+const JOIN_MAX_ANGLE = (40 * Math.PI) / 180;
+
+/**
+ * Joins pairs of neighboring triangles into quads, like Blender's Tris to Quads: candidates
+ * are the shared edges whose two triangles are nearly flat and make a convex quad, best ones
+ * first. Triangles only pair with neighbors of the same `group` (material). The input must
+ * already be clean (cleanMesh output); if the result somehow isn't valid, nothing is joined.
+ */
+export function joinTriangles(
+  data: MeshData,
+  faceSrc: number[],
+  group: (srcFace: number) => string = () => '',
+): { data: MeshData; faceSrc: number[]; joined: number } {
+  const P = data.positions;
+  const F = data.faces;
+  const edgeFaces = new Map<number, number[]>();
+  F.forEach((f, fi) => {
+    if (f.length !== 3) return;
+    for (let i = 0; i < 3; i++) {
+      const k = edgeKey(f[i], f[(i + 1) % 3]);
+      const l = edgeFaces.get(k);
+      if (l) l.push(fi);
+      else edgeFaces.set(k, [fi]);
+    }
+  });
+  const sub = (a: number, b: number) => [
+    P[a * 3] - P[b * 3],
+    P[a * 3 + 1] - P[b * 3 + 1],
+    P[a * 3 + 2] - P[b * 3 + 2],
+  ];
+  const cross = (u: number[], v: number[]) => [
+    u[1] * v[2] - u[2] * v[1],
+    u[2] * v[0] - u[0] * v[2],
+    u[0] * v[1] - u[1] * v[0],
+  ];
+  const dot = (u: number[], v: number[]) => u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
+  const len = (u: number[]) => Math.sqrt(dot(u, u));
+  const triNormal = (f: number[]) => {
+    const n = cross(sub(f[1], f[0]), sub(f[2], f[0]));
+    const l = len(n) || 1;
+    return n.map((x) => x / l);
+  };
+
+  type Cand = { t1: number; t2: number; quad: number[]; uv?: number[]; score: number };
+  const cands: Cand[] = [];
+  for (const [, fs] of edgeFaces) {
+    if (fs.length !== 2) continue;
+    const [t1, t2] = fs;
+    if (group(faceSrc[t1]) !== group(faceSrc[t2])) continue;
+    const f1 = F[t1],
+      f2 = F[t2];
+    // Rotate t1 so the shared edge is a→b (corners a, b, c); t2 then runs b→a then d.
+    let i1 = 0;
+    while (f2.indexOf(f1[i1]) < 0 || f2.indexOf(f1[(i1 + 1) % 3]) < 0) i1++;
+    const a = f1[i1],
+      b = f1[(i1 + 1) % 3],
+      c = f1[(i1 + 2) % 3];
+    const j = f2.indexOf(a);
+    const d = f2[(j + 1) % 3];
+    if (f2[(j + 2) % 3] !== b) continue; // winding disagrees (cannot happen after cleanMesh)
+    const quad = [b, c, a, d];
+    const n1 = triNormal(f1),
+      n2 = triNormal(f2);
+    const angle = Math.acos(Math.min(1, Math.max(-1, dot(n1, n2))));
+    if (angle > JOIN_MAX_ANGLE) continue;
+    // Convex: every corner turns the same way as the quad's normal; score how far corners are from 90°.
+    const qn = [n1[0] + n2[0], n1[1] + n2[1], n1[2] + n2[2]];
+    let convex = true;
+    let shape = 0;
+    for (let k = 0; k < 4 && convex; k++) {
+      const p = quad[(k + 3) % 4],
+        q = quad[k],
+        r = quad[(k + 1) % 4];
+      const u = sub(q, p),
+        v = sub(r, q);
+      if (dot(cross(u, v), qn) <= 1e-12 * len(u) * len(v)) convex = false;
+      const corner = Math.PI - Math.acos(Math.min(1, Math.max(-1, dot(u, v) / (len(u) * len(v) || 1))));
+      shape += Math.abs(corner - Math.PI / 2);
+    }
+    if (!convex) continue;
+    let uv: number[] | undefined;
+    if (data.uvs) {
+      const u1 = data.uvs[t1],
+        u2 = data.uvs[t2];
+      const at = (u: number[], f: number[], v: number) => [u[f.indexOf(v) * 2], u[f.indexOf(v) * 2 + 1]];
+      const same = (x: number[], y: number[]) => Math.abs(x[0] - y[0]) < 1e-6 && Math.abs(x[1] - y[1]) < 1e-6;
+      if (!same(at(u1, f1, a), at(u2, f2, a)) || !same(at(u1, f1, b), at(u2, f2, b))) continue; // UV seam
+      uv = [...at(u1, f1, b), ...at(u1, f1, c), ...at(u1, f1, a), ...at(u2, f2, d)];
+    }
+    cands.push({ t1, t2, quad, uv, score: angle + shape / 4 });
+  }
+  cands.sort((x, y) => x.score - y.score);
+  const used = new Uint8Array(F.length);
+  const quadOf = new Map<number, Cand>();
+  for (const c of cands) {
+    if (used[c.t1] || used[c.t2]) continue;
+    used[c.t1] = used[c.t2] = 1;
+    quadOf.set(Math.min(c.t1, c.t2), c);
+  }
+  if (!quadOf.size) return { data, faceSrc, joined: 0 };
+  const faces: number[][] = [];
+  const src: number[] = [];
+  const uvs: number[][] | undefined = data.uvs ? [] : undefined;
+  F.forEach((f, fi) => {
+    const c = quadOf.get(fi);
+    if (c) {
+      faces.push(c.quad);
+      src.push(faceSrc[fi]);
+      uvs?.push(c.uv!);
+    } else if (!used[fi]) {
+      faces.push(f);
+      src.push(faceSrc[fi]);
+      uvs?.push(data.uvs![fi]);
+    }
+  });
+  const out: MeshData = { ...data, faces };
+  if (uvs) out.uvs = uvs;
+  if (!validateMesh(out).ok) return { data, faceSrc, joined: 0 };
+  return { data: out, faceSrc: src, joined: quadOf.size };
+}

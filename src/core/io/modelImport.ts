@@ -1,6 +1,6 @@
-// OBJ (+ MTL) import: parse, clean up each object, apply the import limits and turn the
-// result into scene objects and materials. Pure: images are resolved by the caller (the app
-// decodes them), this only says which file each object's texture comes from.
+// Model import (OBJ + MTL, STL): parse, clean up each object, apply the import limits and turn
+// the result into scene objects and materials. Pure: images are resolved by the caller (the
+// app decodes them), this only says which file each object's texture comes from.
 
 import { Mesh } from '../mesh/mesh';
 import {
@@ -12,17 +12,19 @@ import {
   type Project,
   type SceneObject,
 } from '../scene/scene';
-import { parseMtl, parseObj, type MtlMaterial } from './obj';
+import { parseMtl, parseObj, type MtlMaterial, type ObjObject } from './obj';
+import { parseStl } from './stl';
 import {
   addReports,
   bboxDiagonal,
   cleanMesh,
   emptyReport,
+  joinTriangles,
   IMPORT_LIMITS,
   type CleanReport,
 } from './importMesh';
 
-export interface ObjImportResult {
+export interface ModelImportResult {
   objects: SceneObject[];
   /** Materials to add to the project (existing identical ones are reused, not listed). */
   materials: Material[];
@@ -46,29 +48,69 @@ export function importObj(
   objText: string,
   mtlTexts: string[] = [],
   opts: { weld?: boolean } = {},
-): ObjImportResult {
-  const warnings: string[] = [];
+): ModelImportResult {
   const parsed = parseObj(objText);
   if (!parsed.length) throw new ImportError('No faces or edges found in that OBJ file');
+  const mtl = new Map<string, MtlMaterial>();
+  for (const t of mtlTexts) for (const m of parseMtl(t)) if (!mtl.has(m.name)) mtl.set(m.name, m);
+  const r = importParsed(project, parsed, mtl, { weld: opts.weld, joinTris: false });
+  if (r.missingMaterials.length && mtlTexts.length)
+    r.warnings.push(
+      `Material${r.missingMaterials.length > 1 ? 's' : ''} not in the MTL: ${r.missingMaterials.join(', ')}`,
+    );
+  return r;
+}
+
+/**
+ * STL (binary or ASCII). STL is a triangle soup in no particular unit, Z-up by convention
+ * (what Blender's importer assumes too): vertices are always welded and triangles joined into
+ * quads where they make a reasonable quad, so the result can be edited like our own meshes.
+ */
+export function importStl(
+  project: Project,
+  bytes: Uint8Array,
+  fileName = 'Model',
+  opts: { joinTris?: boolean } = {},
+): ModelImportResult {
+  let solids;
+  try {
+    solids = parseStl(bytes);
+  } catch {
+    throw new ImportError('That is not an STL file');
+  }
+  const fallback = fileName.replace(/\.[^.]*$/, '') || 'Model';
+  const parsed: ObjObject[] = solids.map((s) => ({
+    name: s.name || fallback,
+    positions: s.positions,
+    faces: s.faces,
+    lines: [],
+    faceMaterials: [],
+  }));
+  if (!parsed.length) throw new ImportError('No triangles found in that STL file');
+  return importParsed(project, parsed, new Map(), { weld: true, joinTris: opts.joinTris ?? true });
+}
+
+function importParsed(
+  project: Project,
+  parsed: ObjObject[],
+  mtl: Map<string, MtlMaterial>,
+  opts: { weld?: boolean; joinTris: boolean },
+): ModelImportResult & { missingMaterials: string[] } {
+  const warnings: string[] = [];
   if (parsed.length > IMPORT_LIMITS.maxObjects)
     throw new ImportError(
       `That file has ${parsed.length} objects; the limit is ${IMPORT_LIMITS.maxObjects}. Join them in Blender first.`,
     );
+  // Triangles joined into quads roughly halve the count, so allow more of them going in.
   const rawFaces = parsed.reduce((n, o) => n + o.faces.length, 0);
-  if (rawFaces > IMPORT_LIMITS.maxFaces)
-    throw new ImportError(
-      `That model has ${rawFaces.toLocaleString('en-US')} faces; the limit is ${IMPORT_LIMITS.maxFaces.toLocaleString('en-US')}. Decimate it in Blender first.`,
-    );
-
-  const mtl = new Map<string, MtlMaterial>();
-  for (const t of mtlTexts) for (const m of parseMtl(t)) if (!mtl.has(m.name)) mtl.set(m.name, m);
+  if (rawFaces > IMPORT_LIMITS.maxFaces * (opts.joinTris ? 2 : 1)) throw tooManyFaces(rawFaces);
 
   // Rescale models that are far too big (millimetre CAD) or too small to edit comfortably.
   const allPos = parsed.flatMap((o) => o.positions);
   const size = maxSide(allPos);
   const scale = size > MAX_SIZE || (size > 0 && size < MIN_SIZE) ? FIT_SIZE / size : 1;
   if (scale !== 1) warnings.push(`Scaled ×${formatScale(scale)} to fit`);
-  if (bboxDiagonal(allPos) === 0) throw new ImportError('That OBJ file has no usable geometry');
+  if (bboxDiagonal(allPos) === 0) throw new ImportError('That file has no usable geometry');
 
   // Materials: one project material per MTL/usemtl name; reuse an identical existing one.
   const materials: Material[] = [];
@@ -115,6 +157,7 @@ export function importObj(
   let report = emptyReport();
   let failed = 0;
   let uvOutside = false;
+  let joinedCount = 0;
   for (const o of parsed) {
     const positions = scale === 1 ? o.positions : o.positions.map((x) => x * scale);
     let cleaned;
@@ -133,8 +176,14 @@ export function importObj(
       failed++;
       continue;
     }
-    const { data, faceSrc } = cleaned;
+    let { data, faceSrc } = cleaned;
     report = addReports(report, cleaned.report);
+    if (opts.joinTris) {
+      const joined = joinTriangles(data, faceSrc, (fi) => o.faceMaterials[fi] ?? '');
+      data = joined.data;
+      faceSrc = joined.faceSrc;
+      joinedCount += joined.joined;
+    }
     if (!data.faces.length && !data.looseEdges.length) {
       failed++;
       continue;
@@ -173,15 +222,22 @@ export function importObj(
     }
     objects.push(obj);
   }
-  if (!objects.length) throw new ImportError('Nothing in that OBJ file could be imported');
+  if (!objects.length) throw new ImportError('Nothing in that file could be imported');
+  const total = objects.reduce((n, o) => n + o.mesh.faces.length, 0);
+  if (total > IMPORT_LIMITS.maxFaces) throw tooManyFaces(total);
   if (failed) warnings.push(`${failed} object${failed > 1 ? 's' : ''} skipped (broken geometry)`);
-  if (missing.size && mtlTexts.length)
-    warnings.push(`Material${missing.size > 1 ? 's' : ''} not in the MTL: ${[...missing].join(', ')}`);
   if (uvOutside) warnings.push('Some UVs are outside 0–1 (tiling), so the texture may look different');
   const dropped = report.degenerate + report.duplicate + report.nonManifold;
   if (dropped) warnings.push(`${dropped} broken face${dropped > 1 ? 's' : ''} removed`);
-  return { objects, materials, textureFiles, report, scale, warnings };
+  if (joinedCount)
+    warnings.push(`${joinedCount} triangle pair${joinedCount > 1 ? 's' : ''} joined into quads`);
+  return { objects, materials, textureFiles, report, scale, warnings, missingMaterials: [...missing] };
 }
+
+const tooManyFaces = (n: number) =>
+  new ImportError(
+    `That model has ${n.toLocaleString('en-US')} faces; the limit is ${IMPORT_LIMITS.maxFaces.toLocaleString('en-US')}. Decimate it in Blender first.`,
+  );
 
 function rgbToRgba(c: number[]): number[] {
   const out: number[] = [];

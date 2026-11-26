@@ -55,7 +55,7 @@ import { makeEditTarget, TransformSession, type TransformKind } from './transfor
 import * as S from './state';
 import { Autosaver, deleteProject, lastProjectId, listProjects, loadProject, saveProject } from './storage';
 import { collectFiles, imageToSquarePng, objFiles, pickFile, pickFiles, projectFile, safeFileName, shareOrDownload, textOf } from './files';
-import { importObj, ImportError } from '../core/io/objImport';
+import { importObj, importStl, ImportError, type ModelImportResult } from '../core/io/modelImport';
 import { IMPORT_LIMITS } from '../core/io/importMesh';
 import { objMtlLibs } from '../core/io/obj';
 import { TexturePainter, diffTiles, flipRows, type PaintLayer, type PaintTile } from '../render/texturePaint';
@@ -237,28 +237,37 @@ export class App implements SceneHost {
   }
 
   /**
-   * Imports an OBJ into the current project as new objects (one undo step). Pick the .obj
-   * alone, together with its .mtl and textures, or a .zip of them.
+   * Imports an OBJ or STL into the current project as new objects (one undo step). Pick the
+   * model alone, an .obj together with its .mtl and textures, or a .zip of them.
    */
   async importModel(): Promise<void> {
-    const picked = await pickFiles('.obj,.mtl,.zip,.png,.jpg,.jpeg,.webp,model/obj,text/plain,application/zip,image/*');
+    const picked = await pickFiles(
+      '.obj,.mtl,.stl,.zip,.png,.jpg,.jpeg,.webp,model/obj,model/stl,text/plain,application/zip,application/sla,application/octet-stream,image/*',
+    );
     if (!picked.length) return;
     try {
       const total = picked.reduce((n, f) => n + f.size, 0);
       if (total > IMPORT_LIMITS.maxFileBytes)
         throw new ImportError(`That's ${(total / 1048576).toFixed(0)} MB; the limit is ${IMPORT_LIMITS.maxFileBytes / 1048576} MB`);
       const files = await collectFiles(picked);
-      const objNames = [...files.keys()].filter((n) => n.endsWith('.obj'));
-      if (!objNames.length) throw new ImportError('Pick an .obj file (or a .zip with one)');
-      const objText = textOf(files.get(objNames[0])!);
-      // The MTLs the OBJ asks for, else any MTL that came along.
-      const libs = objMtlLibs(objText).map((n) => n.split(/[\\/]/).pop()!.toLowerCase());
-      let mtlNames = libs.filter((n) => files.has(n));
-      if (!mtlNames.length) mtlNames = [...files.keys()].filter((n) => n.endsWith('.mtl'));
-      const r = importObj(this.project, objText, mtlNames.map((n) => textOf(files.get(n)!)));
-      const warnings = [...r.warnings];
-      if (objNames.length > 1) warnings.push(`only ${objNames[0]} was imported`);
-      if (libs.length && !mtlNames.length) warnings.push('no .mtl picked, so materials are plain');
+      const models = [...files.keys()].filter((n) => /\.(obj|stl)$/.test(n));
+      if (!models.length) throw new ImportError('Pick an .obj or .stl file (or a .zip with one)');
+      const model = models[0];
+      const warnings: string[] = [];
+      let r: ModelImportResult;
+      if (model.endsWith('.stl')) {
+        r = importStl(this.project, files.get(model)!, picked.find((f) => f.name.toLowerCase() === model)?.name ?? model);
+      } else {
+        const objText = textOf(files.get(model)!);
+        // The MTLs the OBJ asks for, else any MTL that came along.
+        const libs = objMtlLibs(objText).map((n) => n.split(/[\\/]/).pop()!.toLowerCase());
+        let mtlNames = libs.filter((n) => files.has(n));
+        if (!mtlNames.length) mtlNames = [...files.keys()].filter((n) => n.endsWith('.mtl'));
+        r = importObj(this.project, objText, mtlNames.map((n) => textOf(files.get(n)!)));
+        if (libs.length && !mtlNames.length) warnings.push('no .mtl picked, so materials are plain');
+      }
+      warnings.unshift(...r.warnings);
+      if (models.length > 1) warnings.push(`only ${model} was imported`);
 
       // Textures become each object's paint texture.
       const images: ProjectImage[] = [];
@@ -287,7 +296,7 @@ export class App implements SceneHost {
       this.project.images.push(...images);
       for (const o of r.objects) this.registry.set(o.id, o);
       this.push(
-        recordChange(this, 'Import OBJ', { ids: [], materials: true }, () => {
+        recordChange(this, model.endsWith('.stl') ? 'Import STL' : 'Import OBJ', { ids: [], materials: true }, () => {
           this.project.materials.push(...r.materials);
           this.project.objects.push(...r.objects);
           S.activeId.value = r.objects[0].id;
@@ -300,7 +309,7 @@ export class App implements SceneHost {
       const head = `Imported ${r.objects.length} object${r.objects.length > 1 ? 's' : ''} (${faces.toLocaleString('en-US')} faces)`;
       S.toast(warnings.length ? `${head} · ${warnings.join(' · ')}` : head, 'info', warnings.length ? 6000 : 2500);
     } catch (e) {
-      if (!(e instanceof ImportError)) S.logError(`OBJ import failed: ${String(e)}`);
+      if (!(e instanceof ImportError)) S.logError(`import failed: ${String(e)}`);
       S.toast(e instanceof ImportError ? e.message : 'Could not import that file', 'error', 5000);
     }
   }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { exportObj, parseMtl, parseObj } from './obj';
-import { importObj, ImportError } from './objImport';
-import { cleanMesh, IMPORT_LIMITS } from './importMesh';
+import { importObj, importStl, ImportError } from './modelImport';
+import { cleanMesh, IMPORT_LIMITS, joinTriangles } from './importMesh';
 import { newObject, newProject } from '../scene/scene';
 import { Mesh } from '../mesh/mesh';
 import { validateMesh } from '../mesh/validate';
@@ -200,5 +200,166 @@ describe('OBJ import', () => {
   it('reads MTL options', () => {
     const [m] = parseMtl('newmtl A\nKd 0.5\nTr 0.25\nPm 1\nmap_Kd -bm 0.5 -o 0 0 0 tex.png\n');
     expect(m).toMatchObject({ color: [0.5, 0.5, 0.5], alpha: 0.75, metallic: 1, map: 'tex.png' });
+  });
+});
+
+// --- STL ------------------------------------------------------------------------------
+
+/** A mesh as STL triangles (quads split along their first diagonal). */
+function stlTriangles(positions: number[], faces: number[][]): number[][][] {
+  const tris: number[][][] = [];
+  const p = (v: number) => [positions[v * 3], positions[v * 3 + 1], positions[v * 3 + 2]];
+  for (const f of faces) for (let i = 1; i + 1 < f.length; i++) tris.push([p(f[0]), p(f[i]), p(f[i + 1])]);
+  return tris;
+}
+
+function binaryStl(tris: number[][][]): Uint8Array {
+  const b = new Uint8Array(84 + tris.length * 50);
+  const dv = new DataView(b.buffer);
+  dv.setUint32(80, tris.length, true);
+  tris.forEach((t, i) =>
+    t.forEach((v, k) => v.forEach((x, j) => dv.setFloat32(84 + i * 50 + 12 + k * 12 + j * 4, x, true))),
+  );
+  return b;
+}
+
+function asciiStl(name: string, tris: number[][][]): string {
+  const facets = tris.map(
+    (t) =>
+      `  facet normal 0 0 0\n    outer loop\n${t.map((v) => `      vertex ${v.join(' ')}`).join('\n')}\n    endloop\n  endfacet`,
+  );
+  return `solid ${name}\n${facets.join('\n')}\nendsolid ${name}\n`;
+}
+
+describe('STL import', () => {
+  const cube = buildPrimitive('cube');
+  const cubeTris = stlTriangles(cube.positions, cube.faces);
+
+  it('reads binary STL, welds it and joins the triangles back into 6 quads', () => {
+    const r = importStl(newProject(), binaryStl(cubeTris), 'part.stl');
+    expect(r.objects).toHaveLength(1);
+    const o = r.objects[0];
+    expect(o.name).toBe('part');
+    expect(o.mesh.vertCount).toBe(8);
+    expect(o.mesh.faces.map((f) => f.length)).toEqual([4, 4, 4, 4, 4, 4]);
+    expect(validateMesh(o.mesh).ok).toBe(true);
+    expect(r.report.welded).toBe(36 - 8);
+    expect(r.warnings).toContain('6 triangle pairs joined into quads');
+  });
+
+  it('keeps triangles when joining is off, and keeps outward winding', () => {
+    const o = importStl(newProject(), binaryStl(cubeTris), 'x.stl', { joinTris: false }).objects[0];
+    expect(o.mesh.faces).toHaveLength(12);
+    // Every face normal points away from the cube's center.
+    for (const f of o.mesh.faces) {
+      const [a, b, c] = f.map((v) => o.mesh.getVert(v));
+      const n = [
+        (b[1] - a[1]) * (c[2] - a[2]) - (b[2] - a[2]) * (c[1] - a[1]),
+        (b[2] - a[2]) * (c[0] - a[0]) - (b[0] - a[0]) * (c[2] - a[2]),
+        (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]),
+      ];
+      const ctr = [0, 1, 2].map((k) => (a[k] + b[k] + c[k]) / 3);
+      expect(n[0] * ctr[0] + n[1] * ctr[1] + n[2] * ctr[2]).toBeGreaterThan(0);
+    }
+  });
+
+  it('reads ASCII STL with several solids (also ones starting with "solid" that are binary)', () => {
+    const txt =
+      asciiStl('Left', cubeTris) +
+      asciiStl(
+        'Right',
+        cubeTris.map((t) => t.map(([x, y, z]) => [x + 5, y, z])),
+      );
+    const r = importStl(newProject(), new TextEncoder().encode(txt), 'pair.stl');
+    expect(r.objects.map((o) => o.name)).toEqual(['Left', 'Right']);
+    expect(r.objects.every((o) => o.mesh.faces.length === 6)).toBe(true);
+    // A binary file whose 80-byte header says "solid": the size check wins.
+    const bin = binaryStl(cubeTris);
+    bin.set(new TextEncoder().encode('solid fake header'), 0);
+    expect(importStl(newProject(), bin).objects[0].mesh.faces).toHaveLength(6);
+  });
+
+  it('only joins triangles that make a flat, convex quad', () => {
+    // A sphere's triangles are not coplanar enough to all join; whatever joins must still be valid.
+    const s = buildPrimitive('uvSphere', { segments: 16, rings: 8 });
+    const o = importStl(newProject(), binaryStl(stlTriangles(s.positions, s.faces)), 's.stl').objects[0];
+    expect(validateMesh(o.mesh).ok).toBe(true);
+    // Every quad comes back (and some near-flat pole triangles pair up too).
+    expect(o.mesh.faces.length).toBeLessThanOrEqual(s.faces.length);
+    expect(o.mesh.faces.filter((f) => f.length === 4).length).toBeGreaterThanOrEqual(
+      s.faces.filter((f) => f.length === 4).length,
+    );
+    // Two triangles folded at 90° stay triangles.
+    const fold = binaryStl([
+      [
+        [0, 0, 0],
+        [1, 0, 0],
+        [0, 1, 0],
+      ],
+      [
+        [1, 0, 0],
+        [0, 0, 0],
+        [0, 0, -1],
+      ],
+    ]);
+    expect(importStl(newProject(), fold).objects[0].mesh.faces).toHaveLength(2);
+  });
+
+  it('keeps UVs when joining, and not across UV seams', () => {
+    const data = {
+      positions: [0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0],
+      faces: [
+        [0, 1, 2],
+        [0, 2, 3],
+      ],
+      looseEdges: [] as [number, number][],
+    };
+    const ok = joinTriangles(
+      {
+        ...data,
+        uvs: [
+          [0, 0, 1, 0, 1, 1],
+          [0, 0, 1, 1, 0, 1],
+        ],
+      },
+      [0, 1],
+    );
+    expect(ok.joined).toBe(1);
+    expect(ok.data.faces).toEqual([[0, 1, 2, 3]]);
+    expect(ok.data.uvs).toEqual([[0, 0, 1, 0, 1, 1, 0, 1]]);
+    const seam = joinTriangles(
+      {
+        ...data,
+        uvs: [
+          [0, 0, 1, 0, 1, 1],
+          [0.5, 0, 1, 1, 0, 1],
+        ],
+      },
+      [0, 1],
+    );
+    expect(seam.joined).toBe(0);
+    expect(joinTriangles(data, [0, 1], (f) => (f === 0 ? 'A' : 'B')).joined).toBe(0);
+  });
+
+  it('enforces the limits after joining, and refuses non-STL data', () => {
+    const n = Math.ceil(Math.sqrt(IMPORT_LIMITS.maxFaces)) + 1; // > maxFaces quads = 2× triangles
+    const tris: number[][][] = [];
+    for (let y = 0; y < n; y++)
+      for (let x = 0; x < n; x++) {
+        tris.push(
+          [
+            [x, y, 0],
+            [x + 1, y, 0],
+            [x + 1, y + 1, 0],
+          ],
+          [
+            [x, y, 0],
+            [x + 1, y + 1, 0],
+            [x, y + 1, 0],
+          ],
+        );
+      }
+    expect(() => importStl(newProject(), binaryStl(tris))).toThrow(/Decimate/);
+    expect(() => importStl(newProject(), new TextEncoder().encode('hello'))).toThrow(ImportError);
   });
 });
