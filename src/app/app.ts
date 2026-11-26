@@ -31,6 +31,7 @@ import {
   selectLinked as selectLinkedOp,
   selectLoop as selectLoopOp,
   selectRing as selectRingOp,
+  edgeRing,
   OpError,
 } from '../core/mesh/ops';
 import { edgeFromKey } from '../core/mesh/keys';
@@ -844,6 +845,7 @@ export class App implements SceneHost {
         if (S.paintTarget.value === 'vertex' && S.paintTool.value === 'erase') S.paintTool.value = 'draw';
       }
     }
+    if (m !== 'edit' && S.tool.value === 'cut') S.tool.value = 'select'; // Cut is Edit Mode only
     S.mode.value = m;
     S.adjustLast.value = null;
     this.changed(false);
@@ -938,6 +940,65 @@ export class App implements SceneHost {
         factor: { min: 0.02, max: 0.98, step: 0.05, label: 'Slide' },
       },
     };
+  }
+
+  // --- Cut tool: swipe across the mesh where the new loop should go ------------------------
+
+  private cutCage: ScreenCage | null = null;
+
+  /**
+   * The first ring the stroke crosses: the first crossed visible edge that lies between quads,
+   * and the screen polyline through the middle of its ring (the loop that would be cut).
+   */
+  private cutRing(o: SceneObject, cage: ScreenCage, pts: [number, number][]): { a: number; b: number; line: [number, number][] } | null {
+    const tried = new Set<number>();
+    for (let i = 1; i < pts.length; i++) {
+      const [px, py] = pts[i - 1], [qx, qy] = pts[i];
+      const hits: { k: number; t: number }[] = [];
+      for (const k of cage.edgeKeys) {
+        const [a, b] = edgeFromKey(k);
+        if (!cage.visible[a] || !cage.visible[b]) continue;
+        const t = segCross(px, py, qx, qy, cage.sx[a], cage.sy[a], cage.sx[b], cage.sy[b]);
+        if (t !== null) hits.push({ k, t });
+      }
+      hits.sort((x, y) => x.t - y.t);
+      for (const { k } of hits) {
+        if (tried.has(k)) continue;
+        tried.add(k);
+        const [a, b] = edgeFromKey(k);
+        const ring = edgeRing(o.mesh, a, b);
+        if (!ring.steps.length) continue;
+        const t = ring.topo;
+        const mid = (u: number, v: number): [number, number] => [(cage.sx[u] + cage.sx[v]) / 2, (cage.sy[u] + cage.sy[v]) / 2];
+        const line: [number, number][] = ring.steps.map(({ he }) => mid(t.heOrigin[he], t.heOrigin[t.heNext[he]]));
+        const last = ring.steps[ring.steps.length - 1].he;
+        line.push(ring.closed ? line[0] : mid(t.heOrigin[t.heNext[t.heNext[last]]], t.heOrigin[t.hePrev[last]]));
+        return { a, b, line };
+      }
+    }
+    return null;
+  }
+
+  /** Cut tool stroke in progress: shows the loop it would cut. */
+  cutUpdate(pts: [number, number][]): void {
+    const o = this.editObject();
+    if (!o) return;
+    this.cutCage ??= projectCage(this.vp, o, S.xray.value);
+    const r = this.cutRing(o, this.cutCage, pts);
+    S.cutStroke.value = { points: pts, loops: r ? [r.line] : [] };
+  }
+
+  /** Cut tool stroke released: one loop cut through the middle of the first ring crossed. */
+  cutEnd(pts: [number, number][], cancelled: boolean): void {
+    const o = this.editObject();
+    const cage = this.cutCage;
+    this.cutCage = null;
+    S.cutStroke.value = null;
+    if (!o || !cage || cancelled) return;
+    const r = this.cutRing(o, cage, pts);
+    if (!r) return S.toast('Swipe across quads to cut a loop', 'error');
+    this.loopCut(1, 0.5, [r.a, r.b]);
+    S.haptic(10);
   }
 
   /**
@@ -1925,4 +1986,16 @@ function pointIn(x: number, y: number, poly: [number, number][]): boolean {
     if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) c = !c;
   }
   return c;
+}
+
+/**
+ * Where segment p→q crosses segment a→b, as a parameter along p→q (0..1), or null.
+ */
+function segCross(px: number, py: number, qx: number, qy: number, ax: number, ay: number, bx: number, by: number): number | null {
+  const rx = qx - px, ry = qy - py, sx = bx - ax, sy = by - ay;
+  const den = rx * sy - ry * sx;
+  if (Math.abs(den) < 1e-9) return null;
+  const t = ((ax - px) * sy - (ay - py) * sx) / den;
+  const u = ((ax - px) * ry - (ay - py) * rx) / den;
+  return t >= 0 && t <= 1 && u >= 0 && u <= 1 ? t : null;
 }

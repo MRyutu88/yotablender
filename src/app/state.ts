@@ -7,7 +7,7 @@ import type { Vec3 } from '../core/math/vec3';
 import type { PrimitiveType } from '../core/primitives/primitives';
 
 export type Mode = 'object' | 'edit' | 'paint';
-export type ToolId = 'select' | 'box' | 'lasso' | 'move' | 'rotate' | 'scale';
+export type ToolId = 'select' | 'box' | 'lasso' | 'move' | 'rotate' | 'scale' | 'cut';
 export type PickOp = 'replace' | 'add' | 'sub';
 export const popover = signal<null | 'select' | 'symmetry'>(null);
 /** Symmetrize settings: which axis, and whether the + side is copied onto the − side. */
@@ -69,6 +69,8 @@ export const checkingUpdate = signal(false);
 export const saveState = signal<'saved' | 'saving' | 'dirty'>('saved');
 export const transforming = signal(false);
 export const marquee = signal<{ kind: 'box' | 'lasso'; points: [number, number][] } | null>(null);
+/** Cut tool (Edit Mode): the finger's stroke and the loops it would cut (screen polylines). */
+export const cutStroke = signal<{ points: [number, number][]; loops: [number, number][][] } | null>(null);
 export const loupe = signal<{ x: number; y: number } | null>(null);
 export const precision = signal(false);
 /** Proportional editing (Edit Mode transforms): on/off and falloff radius in meters. */

@@ -371,6 +371,32 @@ input {
 .navpanel .btn.active {
   background: var(--accent);
 }
+.symrail {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 14px;
+  background: rgba(29, 31, 35, 0.45);
+  border: 1px solid var(--line);
+}
+.symrail.on {
+  border-color: rgba(255, 255, 255, 0.22);
+}
+.symrail .sym-axis.active.axis-x {
+  background: var(--x);
+  color: #111;
+}
+.symrail .sym-axis.active.axis-y {
+  background: var(--y);
+  color: #111;
+}
+.symrail .sym-axis.active.axis-z {
+  background: var(--z);
+  color: #111;
+}
 .navball {
   width: 96px;
   height: 96px;
@@ -1164,6 +1190,27 @@ input {
 .marquee.op-sub rect,
 .marquee.op-sub polygon {
   stroke: var(--danger);
+}
+
+.cutstroke {
+  position: absolute;
+  inset: 0;
+  pointer-events: none !important;
+}
+.cutstroke polyline {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.cutstroke .stroke {
+  stroke: rgba(255, 255, 255, 0.55);
+  stroke-width: 2;
+  stroke-dasharray: 4 5;
+}
+.cutstroke .loop {
+  stroke: #ffd84a;
+  stroke-width: 3;
+  filter: drop-shadow(0 0 3px rgba(255, 216, 74, 0.6));
 }
 
 .loupe {

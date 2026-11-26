@@ -2,6 +2,7 @@
 //
 //   Select tool     tap = select, hold = loupe (Edit Mode), drag = orbit
 //   Box / Lasso     drag = selection shape (orbit with the nav ball or two fingers)
+//   Cut (Edit)      swipe across quads = loop cut through the middle of the ring crossed
 //   Move/Rot/Scale  drag on the model = transform the selection (grab a gizmo handle to
 //                   constrain); drag on empty space (or with nothing selected) orbits
 //   X/Y/Z chip held drag anywhere = slide the selection along that axis
@@ -13,12 +14,13 @@ import type { GestureHandler, Pt } from './gestures';
 import * as S from '../app/state';
 import type { TransformKind } from '../app/transform';
 
-type DragKind = 'orbit' | 'transform' | 'marquee' | 'none';
+type DragKind = 'orbit' | 'transform' | 'marquee' | 'cut' | 'none';
 
 export class InputController implements GestureHandler {
   private drag: DragKind = 'none';
   private last: Pt = { x: 0, y: 0 };
   private marqueePts: [number, number][] = [];
+  private cutPts: [number, number][] = [];
 
   constructor(private app: App) {}
 
@@ -94,6 +96,12 @@ export class InputController implements GestureHandler {
         return;
       }
     }
+    if (t === 'cut' && S.mode.value === 'edit') {
+      this.drag = 'cut';
+      this.cutPts = [[start.x, start.y], [p.x, p.y]];
+      this.app.cutUpdate(this.cutPts);
+      return;
+    }
     if (t === 'box' || t === 'lasso') {
       this.drag = 'marquee';
       this.marqueePts = [[start.x, start.y]];
@@ -115,6 +123,12 @@ export class InputController implements GestureHandler {
       this.app.updateTransform(p.x, p.y, precision);
     } else if (this.drag === 'marquee') {
       this.updateMarquee(p);
+    } else if (this.drag === 'cut') {
+      const l = this.cutPts[this.cutPts.length - 1];
+      if (Math.hypot(p.x - l[0], p.y - l[1]) > 3) {
+        this.cutPts.push([p.x, p.y]);
+        this.app.cutUpdate(this.cutPts);
+      }
     }
     this.last = { ...p };
   }
@@ -126,6 +140,7 @@ export class InputController implements GestureHandler {
       return;
     }
     if (this.drag === 'transform') this.app.endTransform(cancelled);
+    else if (this.drag === 'cut') this.app.cutEnd(this.cutPts, cancelled);
     else if (this.drag === 'marquee') {
       const m = S.marquee.value;
       S.marquee.value = null;
