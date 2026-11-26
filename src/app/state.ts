@@ -64,6 +64,8 @@ export const canUndo = signal(false);
 export const canRedo = signal(false);
 export const projectName = signal('Untitled');
 export const updateReady = signal(false);
+/** A manual "Check for update" (Settings) is in flight. */
+export const checkingUpdate = signal(false);
 export const saveState = signal<'saved' | 'saving' | 'dirty'>('saved');
 export const transforming = signal(false);
 export const marquee = signal<{ kind: 'box' | 'lasso'; points: [number, number][] } | null>(null);
