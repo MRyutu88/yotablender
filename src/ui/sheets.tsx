@@ -272,12 +272,13 @@ export function MenuSheet({ app, installPrompt }: { app: App; installPrompt: (()
 
       <h3 class="section">Import</h3>
       <div class="row gap wrap">
-        <IconButton icon={Icon.cube({ size: 20 })} label="Import OBJ / STL" onClick={() => void app.importModel()} />
+        <IconButton icon={Icon.cube({ size: 20 })} label="Import model" onClick={() => void app.importModel()} />
       </div>
       <p class="note">
-        Pick an .stl, or an .obj together with its .mtl and textures (or one .zip of them). Up to 20,000 faces, 32 objects and 25 MB.
-        OBJ brings materials, vertex colors, UVs and one texture per object (it becomes the paint texture, up to 2K). STL triangles are
-        joined into quads where they fit. Broken faces are repaired or removed; huge or tiny models are scaled to fit.
+        OBJ, STL or glTF (.glb). Pick the model alone, with its .mtl/.bin and textures, or one .zip of them. Up to 20,000 faces, 32
+        objects and 25 MB. Materials, vertex colors, UVs and one texture per object come along (it becomes the paint texture, up to
+        2K); triangles are joined into quads where they fit. Broken faces are repaired or removed; huge or tiny models are scaled to
+        fit. Animation, armatures and shape keys are not imported.
       </p>
 
       <h3 class="section">Export to Blender</h3>

@@ -55,7 +55,7 @@ import { makeEditTarget, TransformSession, type TransformKind } from './transfor
 import * as S from './state';
 import { Autosaver, deleteProject, lastProjectId, listProjects, loadProject, saveProject } from './storage';
 import { collectFiles, imageToSquarePng, objFiles, pickFile, pickFiles, projectFile, safeFileName, shareOrDownload, textOf } from './files';
-import { importObj, importStl, ImportError, type ModelImportResult } from '../core/io/modelImport';
+import { importGltf, importObj, importStl, ImportError, type ModelImportResult } from '../core/io/modelImport';
 import { IMPORT_LIMITS } from '../core/io/importMesh';
 import { objMtlLibs } from '../core/io/obj';
 import { TexturePainter, diffTiles, flipRows, type PaintLayer, type PaintTile } from '../render/texturePaint';
@@ -237,12 +237,12 @@ export class App implements SceneHost {
   }
 
   /**
-   * Imports an OBJ or STL into the current project as new objects (one undo step). Pick the
+   * Imports an OBJ, STL or glTF into the current project as new objects (one undo step). Pick the
    * model alone, an .obj together with its .mtl and textures, or a .zip of them.
    */
   async importModel(): Promise<void> {
     const picked = await pickFiles(
-      '.obj,.mtl,.stl,.zip,.png,.jpg,.jpeg,.webp,model/obj,model/stl,text/plain,application/zip,application/sla,application/octet-stream,image/*',
+      '.obj,.mtl,.stl,.glb,.gltf,.bin,.zip,.png,.jpg,.jpeg,.webp,model/obj,model/stl,model/gltf-binary,model/gltf+json,text/plain,application/zip,application/sla,application/octet-stream,image/*',
     );
     if (!picked.length) return;
     try {
@@ -250,13 +250,17 @@ export class App implements SceneHost {
       if (total > IMPORT_LIMITS.maxFileBytes)
         throw new ImportError(`That's ${(total / 1048576).toFixed(0)} MB; the limit is ${IMPORT_LIMITS.maxFileBytes / 1048576} MB`);
       const files = await collectFiles(picked);
-      const models = [...files.keys()].filter((n) => /\.(obj|stl)$/.test(n));
-      if (!models.length) throw new ImportError('Pick an .obj or .stl file (or a .zip with one)');
+      const models = [...files.keys()].filter((n) => /\.(obj|stl|glb|gltf)$/.test(n));
+      if (!models.length) throw new ImportError('Pick an .obj, .stl or .glb file (or a .zip with one)');
       const model = models[0];
       const warnings: string[] = [];
       let r: ModelImportResult;
+      const displayName = picked.find((f) => f.name.toLowerCase() === model)?.name ?? model;
+      const byName = (uri: string) => files.get(uri.split(/[\\/]/).pop()!.toLowerCase());
       if (model.endsWith('.stl')) {
-        r = importStl(this.project, files.get(model)!, picked.find((f) => f.name.toLowerCase() === model)?.name ?? model);
+        r = importStl(this.project, files.get(model)!, displayName);
+      } else if (/\.(glb|gltf)$/.test(model)) {
+        r = importGltf(this.project, files.get(model)!, displayName, byName);
       } else {
         const objText = textOf(files.get(model)!);
         // The MTLs the OBJ asks for, else any MTL that came along.
@@ -275,7 +279,7 @@ export class App implements SceneHost {
       for (const o of r.objects) {
         const file = r.textureFiles[o.id];
         if (!file) continue;
-        const bytes = files.get(file.split(/[\\/]/).pop()!.toLowerCase());
+        const bytes = r.embeddedImages?.[file] ?? byName(file);
         if (!bytes) {
           missingTex.add(file);
           continue;
@@ -296,7 +300,7 @@ export class App implements SceneHost {
       this.project.images.push(...images);
       for (const o of r.objects) this.registry.set(o.id, o);
       this.push(
-        recordChange(this, model.endsWith('.stl') ? 'Import STL' : 'Import OBJ', { ids: [], materials: true }, () => {
+        recordChange(this, `Import ${model.split('.').pop()!.toUpperCase()}`, { ids: [], materials: true }, () => {
           this.project.materials.push(...r.materials);
           this.project.objects.push(...r.objects);
           S.activeId.value = r.objects[0].id;

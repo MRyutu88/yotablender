@@ -14,6 +14,7 @@ import {
 } from '../scene/scene';
 import { parseMtl, parseObj, type MtlMaterial, type ObjObject } from './obj';
 import { parseStl } from './stl';
+import { GltfError, parseGltf } from './gltf';
 import {
   addReports,
   bboxDiagonal,
@@ -30,6 +31,8 @@ export interface ModelImportResult {
   materials: Material[];
   /** Texture file (`map_Kd`) per new object id, for objects with UVs. */
   textureFiles: Record<string, string>;
+  /** Image bytes embedded in the file (glTF), by the names used in `textureFiles`. */
+  embeddedImages?: Record<string, Uint8Array>;
   report: CleanReport;
   /** Scale baked into the vertices to bring a huge or tiny model to a workable size (1 = none). */
   scale: number;
@@ -88,6 +91,60 @@ export function importStl(
   }));
   if (!parsed.length) throw new ImportError('No triangles found in that STL file');
   return importParsed(project, parsed, new Map(), { weld: true, joinTris: opts.joinTris ?? true });
+}
+
+/**
+ * glTF 2.0: a .glb, or a .gltf whose .bin and images `resolve` finds (by file name). Like STL,
+ * glTF stores triangles with vertices split at every seam, so they are welded and joined. A
+ * scene with more mesh nodes than the object limit is merged into one object.
+ */
+export function importGltf(
+  project: Project,
+  bytes: Uint8Array,
+  fileName = 'Model',
+  resolve: (uri: string) => Uint8Array | undefined = () => undefined,
+  opts: { joinTris?: boolean } = {},
+): ModelImportResult {
+  let scene;
+  try {
+    scene = parseGltf(bytes, resolve);
+  } catch (e) {
+    if (e instanceof GltfError) throw new ImportError(e.message);
+    throw new ImportError('Could not read that glTF file');
+  }
+  let parsed = scene.objects;
+  if (!parsed.length) throw new ImportError('No meshes found in that glTF file');
+  const notes = [...scene.warnings];
+  if (parsed.length > IMPORT_LIMITS.maxObjects) {
+    notes.push(`${parsed.length} meshes merged into one object (limit ${IMPORT_LIMITS.maxObjects})`);
+    parsed = [mergeObjects(parsed, fileName.replace(/\.[^.]*$/, '') || 'Model')];
+  }
+  const mtl = new Map(scene.materials.map((m) => [m.name, m]));
+  const r = importParsed(project, parsed, mtl, { weld: true, joinTris: opts.joinTris ?? true });
+  r.warnings.unshift(...notes);
+  r.embeddedImages = scene.images;
+  return r;
+}
+
+function mergeObjects(objs: ObjObject[], name: string): ObjObject {
+  const out: ObjObject = { name, positions: [], faces: [], lines: [], faceMaterials: [] };
+  const anyColors = objs.some((o) => o.colors);
+  const anyUVs = objs.some((o) => o.uvs);
+  if (anyColors) out.colors = [];
+  if (anyUVs) out.uvs = [];
+  let smooth = 0;
+  for (const o of objs) {
+    const base = out.positions.length / 3;
+    out.positions.push(...o.positions);
+    if (anyColors) out.colors!.push(...(o.colors ?? new Array(o.positions.length).fill(1)));
+    out.faces.push(...o.faces.map((f) => f.map((v) => v + base)));
+    out.lines.push(...o.lines.map(([a, b]) => [a + base, b + base] as [number, number]));
+    out.faceMaterials.push(...o.faceMaterials);
+    if (anyUVs) out.uvs!.push(...(o.uvs ?? o.faces.map((f) => new Array(f.length * 2).fill(0))));
+    smooth += o.smooth ? o.faces.length : -o.faces.length;
+  }
+  out.smooth = smooth > 0;
+  return out;
 }
 
 function importParsed(
