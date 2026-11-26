@@ -14,6 +14,12 @@ A touch-first low-poly character modeler for phones (an installable PWA) with a 
 
 ## What it does
 
+- **Wheels** (Object and Edit Mode): the round button on the left opens the actions wheel
+  (Edit: Mesh, Merge, Select, Delete, Material, Modifiers, Item; Object: Add, Objects,
+  Duplicate, Delete, Material, Modifiers, Item, Select All); the one on the right picks the tool
+  (Select, Box, Lasso, Move, Rotate, Scale). Tap to open and tap a slice, or press, slide
+  toward a category, keep sliding onto a tool and lift. The last three actions sit above the
+  left button.
 - **Object Mode:** primitives (cube, quad sphere, UV sphere, cylinder, cone, torus, plane) and a
   "Character start" (half box with Mirror + Subdivision); move/rotate/scale, duplicate, outliner.
 - **Edit Mode** (vertex / edge / face): extrude, inset, loop cut, merge, delete; select

@@ -500,9 +500,140 @@ input {
   min-height: 60px;
 }
 
+/* --- Radial menus (wheel.tsx) ----------------------------------------------------------- */
+
+.wheel-dock {
+  position: absolute;
+  bottom: calc(var(--safe-bottom) + 100px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  z-index: 3;
+}
+.wheel-dock.left {
+  left: calc(var(--safe-left) + 10px);
+}
+.wheel-dock.right {
+  right: calc(var(--safe-right) + 10px);
+}
+.wheel-btn {
+  width: 62px;
+  height: 62px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--text, #eee);
+  background: var(--panel);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(10px);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: transform 0.12s ease-out, background 0.12s;
+}
+.wheel-btn:active,
+.wheel-btn.open {
+  transform: scale(0.92);
+}
+.wheel-btn.active {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.wheel-recents {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.wheel-recents .btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--panel);
+  backdrop-filter: blur(8px);
+}
+.wheel-recents .btn.active {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.wheel-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 6;
+  animation: wheel-in 0.14s ease-out;
+}
+@keyframes wheel-in {
+  from {
+    opacity: 0;
+  }
+}
+.wheel-dim {
+  fill: rgba(0, 0, 0, 0.28);
+}
+.wfo {
+  pointer-events: none;
+}
+.wslot {
+  fill: rgba(29, 31, 35, 0.94);
+  stroke: rgba(255, 255, 255, 0.1);
+  stroke-width: 1;
+  transition: fill 0.08s;
+}
+.wslot.tool {
+  fill: rgba(38, 40, 45, 0.96);
+}
+.wslot.active {
+  fill: rgba(255, 154, 46, 0.35);
+}
+.wslot.hover {
+  fill: var(--accent);
+}
+.wlabel {
+  pointer-events: none;
+  color: #eee;
+}
+.wlabel.hover {
+  color: var(--accent-ink);
+}
+.wlabel text {
+  fill: currentColor;
+  font-size: 10px;
+  font-weight: 650;
+  text-anchor: middle;
+}
+.wicon {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  color: inherit;
+}
+.wheel-title {
+  display: inline-block;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: var(--panel-solid);
+  border: 1px solid var(--line);
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+}
+.wheel-title.right {
+  float: right;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
 /* While transforming, fade the chrome so the model is visible. */
 .ui.transforming .actions,
 .ui.transforming .tools,
+.ui.transforming .wheel-dock,
 .ui.transforming .navpanel,
 .ui.transforming .topbar {
   opacity: 0.25;
