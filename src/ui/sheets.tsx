@@ -270,6 +270,16 @@ export function MenuSheet({ app, installPrompt }: { app: App; installPrompt: (()
         <IconButton icon={Icon.folder({ size: 20 })} label="Open file" onClick={() => void app.openProjectFile()} />
       </div>
 
+      <h3 class="section">Import</h3>
+      <div class="row gap wrap">
+        <IconButton icon={Icon.cube({ size: 20 })} label="Import OBJ" onClick={() => void app.importModel()} />
+      </div>
+      <p class="note">
+        Pick the .obj, together with its .mtl and textures, or one .zip of them. Up to 20,000 faces, 32 objects and 25 MB. Materials,
+        vertex colors, UVs and one texture per object come along (the texture becomes the paint texture, up to 2K). Broken faces are
+        repaired or removed; huge or tiny models are scaled to fit.
+      </p>
+
       <h3 class="section">Export to Blender</h3>
       <div class="row gap wrap">
         <Toggle label="Apply Mirror" value={applyMirror} onChange={setApplyMirror} />

@@ -54,7 +54,10 @@ import {
 import { makeEditTarget, TransformSession, type TransformKind } from './transform';
 import * as S from './state';
 import { Autosaver, deleteProject, lastProjectId, listProjects, loadProject, saveProject } from './storage';
-import { objFiles, pickFile, projectFile, safeFileName, shareOrDownload } from './files';
+import { collectFiles, imageToSquarePng, objFiles, pickFile, pickFiles, projectFile, safeFileName, shareOrDownload, textOf } from './files';
+import { importObj, ImportError } from '../core/io/objImport';
+import { IMPORT_LIMITS } from '../core/io/importMesh';
+import { objMtlLibs } from '../core/io/obj';
 import { TexturePainter, diffTiles, flipRows, type PaintLayer, type PaintTile } from '../render/texturePaint';
 import { unwrap } from '../core/uv/unwrap';
 import { encodePng } from '../core/io/png';
@@ -230,6 +233,75 @@ export class App implements SceneHost {
       S.toast(`Opened ${p.name}`);
     } catch (e) {
       S.toast(e instanceof Error ? e.message : 'Could not open that file', 'error', 4000);
+    }
+  }
+
+  /**
+   * Imports an OBJ into the current project as new objects (one undo step). Pick the .obj
+   * alone, together with its .mtl and textures, or a .zip of them.
+   */
+  async importModel(): Promise<void> {
+    const picked = await pickFiles('.obj,.mtl,.zip,.png,.jpg,.jpeg,.webp,model/obj,text/plain,application/zip,image/*');
+    if (!picked.length) return;
+    try {
+      const total = picked.reduce((n, f) => n + f.size, 0);
+      if (total > IMPORT_LIMITS.maxFileBytes)
+        throw new ImportError(`That's ${(total / 1048576).toFixed(0)} MB; the limit is ${IMPORT_LIMITS.maxFileBytes / 1048576} MB`);
+      const files = await collectFiles(picked);
+      const objNames = [...files.keys()].filter((n) => n.endsWith('.obj'));
+      if (!objNames.length) throw new ImportError('Pick an .obj file (or a .zip with one)');
+      const objText = textOf(files.get(objNames[0])!);
+      // The MTLs the OBJ asks for, else any MTL that came along.
+      const libs = objMtlLibs(objText).map((n) => n.split(/[\\/]/).pop()!.toLowerCase());
+      let mtlNames = libs.filter((n) => files.has(n));
+      if (!mtlNames.length) mtlNames = [...files.keys()].filter((n) => n.endsWith('.mtl'));
+      const r = importObj(this.project, objText, mtlNames.map((n) => textOf(files.get(n)!)));
+      const warnings = [...r.warnings];
+      if (objNames.length > 1) warnings.push(`only ${objNames[0]} was imported`);
+      if (libs.length && !mtlNames.length) warnings.push('no .mtl picked, so materials are plain');
+
+      // Textures become each object's paint texture.
+      const images: ProjectImage[] = [];
+      const missingTex = new Set<string>();
+      for (const o of r.objects) {
+        const file = r.textureFiles[o.id];
+        if (!file) continue;
+        const bytes = files.get(file.split(/[\\/]/).pop()!.toLowerCase());
+        if (!bytes) {
+          missingTex.add(file);
+          continue;
+        }
+        try {
+          const { size, png } = await imageToSquarePng(bytes, IMPORT_LIMITS.maxTextureSize);
+          const img: ProjectImage = { id: uid(), name: uniqueName(`${o.name} Paint`, [...this.project.images, ...images].map((i) => i.name)), width: size, height: size, png };
+          images.push(img);
+          o.texture = img.id;
+        } catch {
+          missingTex.add(file);
+        }
+      }
+      if (missingTex.size) warnings.push(`texture${missingTex.size > 1 ? 's' : ''} not loaded: ${[...missingTex].join(', ')}`);
+
+      if (S.mode.value !== 'object') this.setMode('object');
+      // Images stay in the project list (undo may bring the reference back); saving keeps only used ones.
+      this.project.images.push(...images);
+      for (const o of r.objects) this.registry.set(o.id, o);
+      this.push(
+        recordChange(this, 'Import OBJ', { ids: [], materials: true }, () => {
+          this.project.materials.push(...r.materials);
+          this.project.objects.push(...r.objects);
+          S.activeId.value = r.objects[0].id;
+          S.selectedIds.value = new Set(r.objects.map((o) => o.id));
+        }),
+      );
+      S.sheet.value = null;
+      this.frameSelected();
+      const faces = r.objects.reduce((n, o) => n + o.mesh.faces.length, 0);
+      const head = `Imported ${r.objects.length} object${r.objects.length > 1 ? 's' : ''} (${faces.toLocaleString('en-US')} faces)`;
+      S.toast(warnings.length ? `${head} · ${warnings.join(' · ')}` : head, 'info', warnings.length ? 6000 : 2500);
+    } catch (e) {
+      if (!(e instanceof ImportError)) S.logError(`OBJ import failed: ${String(e)}`);
+      S.toast(e instanceof ImportError ? e.message : 'Could not import that file', 'error', 5000);
     }
   }
 
