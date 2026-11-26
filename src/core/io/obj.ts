@@ -145,35 +145,49 @@ const srgbToLin = (c: number) => (c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055
 /** OBJ names end at the line break; keep them on one line and without leading/trailing spaces. */
 const safeName = (s: string) => s.replace(/[\r\n]+/g, ' ').trim() || 'Object';
 
-// --- Minimal reader (round-trip tests and future import) ---------------------------------
+// --- Reader (round-trip tests and import) -----------------------------------------------
 
 export interface ObjObject {
   name: string;
   /** Positions converted back to Z-up. */
   positions: number[];
-  /** Vertex colors (RGB) if the file had them. */
+  /** Vertex colors (linear RGB) if the file had them. */
   colors?: number[];
-  /** Material name per face. */
+  /** Material name per face ('' = none). */
   faceMaterials: string[];
   /** Corner UVs per face (u,v flat), when the file has `vt` and faces use them. */
   uvs?: number[][];
   faces: number[][];
   lines: [number, number][];
   material?: string;
+  /** Shade smooth (an `s` line other than `s 0`/`s off`). */
+  smooth?: boolean;
 }
 
+/**
+ * Parses OBJ text. Objects start at `o` lines; files without any `o` split at `g` instead
+ * (what most exporters use). Faces with bad indices are skipped, vertices are only taken when
+ * something uses them, and objects with nothing in them are left out.
+ */
 export function parseObj(text: string): ObjObject[] {
   const all: number[] = [];
   const allColors: (number[] | null)[] = [];
   const allUV: number[] = [];
   const objects: ObjObject[] = [];
+  const splitOnGroups = !/^[ \t]*o[ \t]/m.test(text);
   let cur: ObjObject | null = null;
-  const ensure = () => {
-    if (!cur) {
-      cur = { name: 'Object', positions: [], faces: [], lines: [], faceMaterials: [] };
-      objects.push(cur);
-    }
-    return cur;
+  let material: string | undefined;
+  let smooth = false;
+  let faceUVs: (number[] | null)[] = [];
+  const finish = () => {
+    if (cur && faceUVs.some((u) => u)) cur.uvs = cur.faces.map((f, i) => faceUVs[i] ?? new Array(f.length * 2).fill(0));
+  };
+  const start = (name: string) => {
+    finish();
+    cur = { name: name || 'Object', positions: [], faces: [], lines: [], faceMaterials: [], material };
+    objects.push(cur);
+    localMap = new Map();
+    faceUVs = [];
   };
   // Indices in OBJ are global; collect per-object local indices.
   let localMap = new Map<number, number>();
@@ -184,47 +198,119 @@ export function parseObj(text: string): ObjObject[] {
       localMap.set(gi, li);
       o.positions.push(all[gi * 3], all[gi * 3 + 1], all[gi * 3 + 2]);
       const c = allColors[gi];
-      if (c) (o.colors ??= []).push(...c);
+      if (c) {
+        // Fill earlier vertices (white) when colors start part-way through.
+        if (!o.colors) o.colors = new Array(li * 3).fill(1);
+        o.colors.push(...c);
+      } else if (o.colors) o.colors.push(1, 1, 1);
     }
     return li;
   };
+  const resolve = (s: string | undefined, count: number) => {
+    if (!s) return -1;
+    const i = parseInt(s, 10);
+    const k = i < 0 ? count + i : i - 1;
+    return Number.isInteger(k) && k >= 0 && k < count ? k : -1;
+  };
+  const rawLines = text.split(/\r?\n/);
+  for (let ln = 0; ln < rawLines.length; ln++) {
+    let line = rawLines[ln].trim();
+    while (line.endsWith('\\') && ln + 1 < rawLines.length) line = line.slice(0, -1) + ' ' + rawLines[++ln].trim();
+    if (!line || line.startsWith('#')) continue;
+    const [tag, ...rest] = line.split(/\s+/);
+    const arg = line.slice(tag.length).trim();
+    if (tag === 'o' || (tag === 'g' && splitOnGroups)) {
+      start(arg);
+    } else if (tag === 'v') {
+      const [x, y, z, r, g, b] = rest.map(Number);
+      all.push(x, -z, y); // Y-up back to Z-up
+      const hasColor = rest.length >= 6 && [r, g, b].every(Number.isFinite);
+      const c01 = (c: number) => srgbToLin(Math.min(1, Math.max(0, c)));
+      allColors.push(hasColor ? [c01(r), c01(g), c01(b)] : null);
+    } else if (tag === 'vt') {
+      const u = Number(rest[0]), v = Number(rest[1] ?? 0);
+      allUV.push(Number.isFinite(u) ? u : 0, Number.isFinite(v) ? v : 0);
+    } else if (tag === 'f' || tag === 'l') {
+      const parts = rest.map((t) => t.split('/'));
+      const idx = parts.map((p) => resolve(p[0], all.length / 3));
+      if (idx.some((i) => i < 0) || idx.length < (tag === 'f' ? 3 : 2)) continue;
+      if (!cur) start('Object');
+      const o = cur!;
+      const loc = idx.map((gi) => local(o, gi));
+      if (tag === 'f') {
+        const uvIdx = parts.map((p) => resolve(p[1], allUV.length / 2));
+        faceUVs[o.faces.length] = uvIdx.every((k) => k >= 0) ? uvIdx.flatMap((k) => [allUV[k * 2], allUV[k * 2 + 1]]) : null;
+        o.faces.push(loc);
+        o.faceMaterials.push(o.material ?? '');
+        if (smooth) o.smooth = true;
+      } else for (let i = 0; i + 1 < loc.length; i++) o.lines.push([loc[i], loc[i + 1]]);
+    } else if (tag === 'usemtl') {
+      material = arg;
+      if (cur) (cur as ObjObject).material = arg;
+    } else if (tag === 's') {
+      smooth = arg !== '0' && arg.toLowerCase() !== 'off';
+    }
+  }
+  finish();
+  return objects.filter((o) => o.faces.length || o.lines.length);
+}
+
+/** File names from the `mtllib` lines. */
+export function objMtlLibs(text: string): string[] {
+  const out: string[] = [];
+  for (const m of text.matchAll(/^[ \t]*mtllib[ \t]+(.+?)[ \t]*$/gm)) out.push(m[1]);
+  return out;
+}
+
+export interface MtlMaterial {
+  name: string;
+  /** `Kd`, used as the linear base color (like Blender's importer). */
+  color: [number, number, number];
+  alpha: number;
+  roughness: number;
+  metallic: number;
+  /** `map_Kd` file name, if any. */
+  map?: string;
+}
+
+/** Reads the materials of an MTL file (base color, alpha, roughness, metallic, color map). */
+export function parseMtl(text: string): MtlMaterial[] {
+  const out: MtlMaterial[] = [];
+  let m: MtlMaterial | null = null;
+  let hasPr = false;
+  const num = (s: string | undefined, d: number) => {
+    const n = Number(s);
+    return Number.isFinite(n) ? n : d;
+  };
+  const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.trim();
     if (!line || line.startsWith('#')) continue;
     const [tag, ...rest] = line.split(/\s+/);
-    if (tag === 'o' || tag === 'g') {
-      cur = { name: line.slice(2).trim(), positions: [], faces: [], lines: [], faceMaterials: [], material: (cur as ObjObject | null)?.material };
-      objects.push(cur);
-      localMap = new Map();
-    } else if (tag === 'v') {
-      const [x, y, z, r, g, b] = rest.map(Number);
-      all.push(x, -z, y); // Y-up back to Z-up
-      allColors.push(rest.length >= 6 ? [srgbToLin(r), srgbToLin(g), srgbToLin(b)] : null);
-    } else if (tag === 'vt') {
-      allUV.push(Number(rest[0]), Number(rest[1]));
-    } else if (tag === 'f' || tag === 'l') {
-      const o = ensure();
-      if (tag === 'f' && rest[0].includes('/') && rest[0].split('/')[1]) {
-        (o.uvs ??= []).push(
-          rest.flatMap((t) => {
-            const i = parseInt(t.split('/')[1], 10);
-            const k = i < 0 ? allUV.length / 2 + i : i - 1;
-            return [allUV[k * 2], allUV[k * 2 + 1]];
-          }),
-        );
+    const key = tag.toLowerCase();
+    if (key === 'newmtl') {
+      m = { name: line.slice(tag.length).trim(), color: [0.8, 0.8, 0.8], alpha: 1, roughness: 0.5, metallic: 0 };
+      hasPr = false;
+      out.push(m);
+    } else if (!m) continue;
+    else if (key === 'kd') m.color = [clamp01(num(rest[0], 0.8)), clamp01(num(rest[1], num(rest[0], 0.8))), clamp01(num(rest[2], num(rest[0], 0.8)))];
+    else if (key === 'd') m.alpha = clamp01(num(rest[0], 1));
+    else if (key === 'tr') m.alpha = clamp01(1 - num(rest[0], 0));
+    else if (key === 'pr') {
+      m.roughness = clamp01(num(rest[0], 0.5));
+      hasPr = true;
+    } else if (key === 'pm') m.metallic = clamp01(num(rest[0], 0));
+    else if (key === 'ns' && !hasPr) m.roughness = clamp01(1 - Math.sqrt(clamp01(num(rest[0], 250) / 1000)));
+    else if (key === 'map_kd') {
+      // Skip options like "-s 1 1 1" / "-bm 0.5"; the file name is what's left (may hold spaces).
+      const toks = rest.slice();
+      while (toks.length > 1 && toks[0].startsWith('-')) {
+        const opt = toks.shift()!;
+        const n = { '-s': 3, '-o': 3, '-t': 3, '-mm': 2 }[opt] ?? 1;
+        toks.splice(0, Math.min(n, toks.length - 1));
       }
-      const idx = rest.map((t) => {
-        const i = parseInt(t.split('/')[0], 10);
-        return i < 0 ? all.length / 3 + i : i - 1;
-      });
-      const loc = idx.map((gi) => local(o, gi));
-      if (tag === 'f') {
-        o.faces.push(loc);
-        o.faceMaterials.push(o.material ?? '');
-      } else for (let i = 0; i + 1 < loc.length; i++) o.lines.push([loc[i], loc[i + 1]]);
-    } else if (tag === 'usemtl') {
-      ensure().material = line.slice(7).trim();
+      if (toks.length) m.map = toks.join(' ');
     }
   }
-  return objects;
+  return out;
 }

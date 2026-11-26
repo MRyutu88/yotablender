@@ -1,10 +1,11 @@
 // Getting files on and off the phone: the share sheet (Drive, Gmail, Quick Share…) with a
 // plain download as fallback, and a file picker for opening projects.
 
-import { strToU8, zipSync } from 'fflate';
+import { strToU8, strFromU8, unzipSync, zipSync } from 'fflate';
 import type { Project } from '../core/scene/scene';
 import { exportObj } from '../core/io/obj';
 import { serializeProject } from '../core/io/projectJson';
+import { encodePng } from '../core/io/png';
 
 export type ShareResult = 'shared' | 'downloaded' | 'cancelled';
 
@@ -43,6 +44,52 @@ export function pickFile(accept: string): Promise<File | null> {
     input.oncancel = () => resolve(null);
     input.click();
   });
+}
+
+export function pickFiles(accept: string): Promise<File[]> {
+  return new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.multiple = true;
+    input.accept = accept;
+    input.onchange = () => resolve(Array.from(input.files ?? []));
+    input.oncancel = () => resolve([]);
+    input.click();
+  });
+}
+
+/** Picked files by lower-case base name, with zips unpacked (folders inside them flattened). */
+export async function collectFiles(files: File[]): Promise<Map<string, Uint8Array>> {
+  const out = new Map<string, Uint8Array>();
+  const base = (n: string) => n.split(/[\\/]/).pop()!.toLowerCase();
+  for (const f of files) {
+    const bytes = new Uint8Array(await f.arrayBuffer());
+    if (/\.zip$/i.test(f.name)) {
+      const entries = unzipSync(bytes, { filter: (e) => !e.name.endsWith('/') && !e.name.startsWith('__MACOSX/') });
+      for (const [name, data] of Object.entries(entries)) if (!out.has(base(name))) out.set(base(name), data);
+    } else out.set(base(f.name), bytes);
+  }
+  return out;
+}
+
+export const textOf = (b: Uint8Array): string => strFromU8(b);
+
+/**
+ * Decodes an image (PNG/JPEG/WebP) into a square power-of-two PNG of at most `max` pixels,
+ * the shape paint layers use. UVs are 0–1, so stretching to a square keeps the mapping.
+ */
+export async function imageToSquarePng(bytes: Uint8Array, max: number): Promise<{ size: number; png: Uint8Array }> {
+  const bmp = await createImageBitmap(new Blob([bytes as BlobPart]));
+  const want = Math.max(bmp.width, bmp.height);
+  let size = 256;
+  while (size < want && size < max) size *= 2;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
+  ctx.drawImage(bmp, 0, 0, size, size);
+  bmp.close();
+  const rgba = new Uint8Array(ctx.getImageData(0, 0, size, size).data.buffer);
+  return { size, png: encodePng(rgba, size, size) };
 }
 
 export const safeFileName = (s: string) => s.replace(/[^\w\-. ]+/g, '_').trim().replace(/\s+/g, '_') || 'model';

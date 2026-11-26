@@ -35,6 +35,14 @@ A touch-first low-poly character modeler for phones (an installable PWA) with a 
 - **Export:** OBJ + MTL (cage with quads/n-gons, per-face materials, vertex colors, UVs, and a
   flattened PNG per painted object) and the native `.yblend.json` project (modifiers, transforms,
   slots, colors, UVs, paint textures) for the Blender add-on.
+- **Import OBJ / STL / glTF** (☰ → Import model): an .obj with its .mtl and textures, an .stl
+  (binary or ASCII), or a .glb (or .gltf with its .bin and images); any of them can come as one .zip.
+  Materials, vertex colors, UVs and one texture per object come along (it becomes the paint texture,
+  up to 2K). Vertices are welded, triangles joined into quads where they make flat, convex ones,
+  flipped faces turned around and broken/non-manifold faces removed; glTF node transforms are baked
+  in; huge or tiny models are scaled to fit. Limits: 25 MB, 20,000 faces, 32 objects (bigger glTF
+  scenes are merged into one object). Not imported: animation, armatures, shape keys, Draco/Meshopt
+  compressed files.
 - Undo/redo for everything, autosave on the device, works offline.
 
 ## Develop
