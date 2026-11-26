@@ -346,6 +346,12 @@ export function MenuSheet({ app, installPrompt }: { app: App; installPrompt: (()
       <div class="row gap wrap">
         <IconButton icon={Icon.help({ size: 20 })} label="Gestures" onClick={() => (S.sheet.value = 'help')} />
         {installPrompt && <IconButton icon={Icon.download({ size: 20 })} label="Install app" onClick={installPrompt} />}
+        <IconButton
+          icon={Icon.rotate({ size: 20 })}
+          label={S.checkingUpdate.value ? 'Checking…' : S.updateReady.value ? 'Reload to update' : 'Check for update'}
+          disabled={S.checkingUpdate.value}
+          onClick={() => window.dispatchEvent(new Event(S.updateReady.value ? 'yb-apply-update' : 'yb-check-update'))}
+        />
       </div>
       <p class="note">Version {__APP_VERSION__} · works offline · projects stay on this device</p>
     </Sheet>

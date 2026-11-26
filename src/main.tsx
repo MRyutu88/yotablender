@@ -56,15 +56,54 @@ if (import.meta.env.PROD) {
       onNeedRefresh: () => (S.updateReady.value = true),
       onOfflineReady: () => S.toast('Ready to work offline'),
     });
-    window.addEventListener('yb-apply-update', async () => {
+    const applyUpdate = async () => {
       void update(true);
       // Belt and braces: talk to the waiting worker directly too (Workbox only does this when
       // it registered that worker itself), and reload once the new version takes control.
       navigator.serviceWorker.addEventListener('controllerchange', () => window.location.reload(), { once: true });
       const reg = await navigator.serviceWorker.getRegistration();
       reg?.waiting?.postMessage({ type: 'SKIP_WAITING' });
+    };
+    window.addEventListener('yb-apply-update', () => void applyUpdate());
+
+    // Manual "Check for update" (Settings): ask the server now instead of waiting for the browser's
+    // own (sometimes slow) update check, then reload straight into the new version if there is one.
+    window.addEventListener('yb-check-update', async () => {
+      if (S.checkingUpdate.value) return;
+      S.checkingUpdate.value = true;
+      try {
+        const reg = await navigator.serviceWorker.getRegistration();
+        if (!reg) {
+          S.toast('Updates are not available here', 'error');
+          return;
+        }
+        if (!reg.waiting) {
+          await reg.update();
+          const installing = reg.installing;
+          if (installing && installing.state !== 'installed' && installing.state !== 'activated') {
+            await new Promise<void>((resolve) => {
+              installing.addEventListener('statechange', () => {
+                if (installing.state === 'installed' || installing.state === 'redundant' || installing.state === 'activated') resolve();
+              });
+            });
+          }
+        }
+        if (reg.waiting) {
+          S.updateReady.value = true;
+          S.toast('New version found, reloading…');
+          await applyUpdate();
+        } else {
+          S.toast("You're on the latest version");
+        }
+      } catch {
+        S.toast("Couldn't check for updates — are you online?", 'error');
+      } finally {
+        S.checkingUpdate.value = false;
+      }
     });
   });
+} else {
+  window.addEventListener('yb-check-update', () => S.toast('Updates only work in the installed/production build'));
 }
 
 // Debug handle for development in desktop Chrome.
