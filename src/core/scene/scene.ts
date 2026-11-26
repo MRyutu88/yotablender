@@ -41,6 +41,11 @@ export interface SceneObject {
   visible: boolean;
   /** Blender's Shade Smooth / Flat. */
   shade_smooth: boolean;
+  /**
+   * Live symmetry in Edit Mode, per local axis (Blender's mesh.use_mirror_x/y/z): moving a
+   * vertex moves its mirror image too. Absent = off.
+   */
+  use_mirror?: [boolean, boolean, boolean];
   /** Edit-mode selection, kept per object like Blender keeps it in the mesh. */
   editSelection: Selection;
   /**

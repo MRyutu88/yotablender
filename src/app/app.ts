@@ -34,6 +34,7 @@ import {
   OpError,
 } from '../core/mesh/ops';
 import { edgeFromKey } from '../core/mesh/keys';
+import { symmetrize as symmetrizeOp } from '../core/mesh/symmetry';
 import { StackEvaluator, type EvalResult } from '../core/modifiers/stack';
 import { newMirror, newSubsurf, sortStack, type Modifier, type ModifierType } from '../core/modifiers/types';
 import { buildPrimitive, PRIMITIVE_DEFAULTS, PRIMITIVE_LABELS, type PrimitiveType } from '../core/primitives/primitives';
@@ -405,6 +406,7 @@ export class App implements SceneHost {
         modifiers: structuredClone(o.modifiers),
         materialSlots: [...o.materialSlots],
         shade_smooth: o.shade_smooth,
+        use_mirror: o.use_mirror && [...o.use_mirror],
         editSelection: cloneSelection(o.editSelection),
       });
       // The copy gets its own paint texture (same pixels), so painting one doesn't change the other.
@@ -923,6 +925,35 @@ export class App implements SceneHost {
       this.history.undo();
       this.inset(values.thickness, values.depth);
     }
+  }
+
+  /** Live symmetry axes of the object being edited (all off when none). */
+  symmetryAxes(o: SceneObject | null = this.editObject()): [boolean, boolean, boolean] {
+    return o?.use_mirror ? [...o.use_mirror] : [false, false, false];
+  }
+
+  /** Turns live symmetry on/off for one local axis of the edited object. */
+  toggleSymmetry(axis: 0 | 1 | 2): void {
+    const o = this.editObject();
+    if (!o) return;
+    o.use_mirror ??= [false, false, false]; // always present, so undo/redo can restore it
+    const on = !o.use_mirror[axis];
+    this.push(
+      recordChange(this, `Symmetry ${'XYZ'[axis]}`, { ids: [o.id], meshes: false }, () => {
+        const u: [boolean, boolean, boolean] = [...o.use_mirror!];
+        u[axis] = on;
+        o.use_mirror = u;
+      }),
+    );
+    S.haptic(6);
+  }
+
+  /** Symmetrize the whole mesh: copies one side of a local axis onto the other. */
+  symmetrize(axis: 0 | 1 | 2, fromPositive: boolean): void {
+    const a = 'XYZ'[axis];
+    const from = fromPositive ? `+${a}` : `−${a}`, to = fromPositive ? `−${a}` : `+${a}`;
+    const cmd = this.runOp('Symmetrize', (o) => symmetrizeOp(o.mesh, axis, fromPositive, o.editSelection));
+    if (cmd) S.toast(`Symmetrized ${from} → ${to}`);
   }
 
   mergeDistance(threshold = 0.0001): void {
@@ -1605,7 +1636,8 @@ export class App implements SceneHost {
     const snap = { enabled: S.snapEnabled.value, ...S.snapSettings.value };
     const o = this.editObject();
     if (o) {
-      const t = makeEditTarget(o, [...o.editSelection.verts], S.propEnabled.value ? S.propRadius.value : null);
+      const sym = this.symmetryAxes(o);
+      const t = makeEditTarget(o, [...o.editSelection.verts], S.propEnabled.value ? S.propRadius.value : null, o.mesh.positions, sym.some(Boolean) ? sym : null);
       this.session = new TransformSession(kind, this.vp.cam, { x, y }, c, { edit: t }, pivot, snap, scrub);
       this.sessionRecord = null;
     } else {

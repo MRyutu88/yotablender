@@ -9,7 +9,9 @@ import type { PrimitiveType } from '../core/primitives/primitives';
 export type Mode = 'object' | 'edit' | 'paint';
 export type ToolId = 'select' | 'box' | 'lasso' | 'move' | 'rotate' | 'scale';
 export type PickOp = 'replace' | 'add' | 'sub';
-export const popover = signal<null | 'select'>(null);
+export const popover = signal<null | 'select' | 'symmetry'>(null);
+/** Symmetrize settings: which axis, and whether the + side is copied onto the − side. */
+export const symmetrizeDir = signal<{ axis: 0 | 1 | 2; fromPositive: boolean }>({ axis: 0, fromPositive: true });
 export type SheetId = null | 'add' | 'outliner' | 'modifiers' | 'menu' | 'item' | 'projects' | 'help' | 'export' | 'materials' | 'texture';
 
 /** Axis constraint for transforms: one axis, a plane (all but one axis), or a custom direction. */

@@ -1313,3 +1313,47 @@ input {
     bottom: calc(var(--safe-bottom) + 64px);
   }
 }
+
+/* --- Symmetry popover --------------------------------------------------------------------- */
+
+.popover.sym {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.sym-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.sym-label {
+  font-weight: 700;
+}
+.sym-axes {
+  display: flex;
+  gap: 6px;
+}
+.sym-axes .chip {
+  min-width: 52px;
+}
+.popover.sym .note {
+  margin: 0;
+}
+.sym-sep {
+  height: 1px;
+  background: var(--line);
+  margin: 2px 0;
+}
+.sym-dir {
+  display: flex;
+}
+.sym-dir .seg {
+  flex: 1;
+}
+.popover.sym .btn.wide {
+  min-height: 52px;
+  margin-top: 0;
+  background: var(--accent);
+  color: var(--accent-ink);
+}

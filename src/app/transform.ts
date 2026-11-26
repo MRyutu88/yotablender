@@ -15,6 +15,7 @@ import { objectMatrix } from '../core/scene/scene';
 import { axisAngleToRot, eulerToRot, invert, mulRot, rotToEuler, compatibleEuler, transformPoint, type Mat4 } from '../core/math/mat4';
 import type { Vec3 } from '../core/math/vec3';
 import { applyMirrorClip } from '../core/modifiers/mirror';
+import { planSymmetry, type Axes } from '../core/mesh/symmetry';
 
 export type TransformKind = 'move' | 'rotate' | 'scale';
 
@@ -43,6 +44,12 @@ export interface EditTarget {
   weights: Float32Array;
   /** The selected vertices (proportional neighbours are added around these). */
   selected: number[];
+  /** Live symmetry axes this target was built with (null = off). */
+  symmetry: Axes | null;
+  /** Per entry of `verts`: the entry it mirrors (-1 = moved by the transform itself). */
+  mirrorOf: Int32Array;
+  /** Per entry: axes negated when mirroring; for drivers, axes pinned to 0 (on a mirror plane). */
+  mirrorMask: Uint8Array;
 }
 
 export interface SnapOptions {
@@ -321,7 +328,7 @@ export class TransformSession {
     // Put everything back first, then rebuild the affected set from the original positions.
     const pos = e.obj.mesh.positions;
     for (let i = 0; i < e.all.length; i++) pos[i] = e.all[i];
-    this.edit = makeEditTarget(e.obj, e.selected, radius, e.all);
+    this.edit = makeEditTarget(e.obj, e.selected, radius, e.all, e.symmetry);
     this.reapply?.();
   }
 
@@ -329,12 +336,23 @@ export class TransformSession {
     const e = this.edit!;
     const pos = e.obj.mesh.positions;
     for (let i = 0; i < e.verts.length; i++) {
+      if (e.mirrorOf[i] >= 0) continue;
       const w = transformPoint(e.m, [e.start[i * 3], e.start[i * 3 + 1], e.start[i * 3 + 2]]);
       const l = transformPoint(e.inv, fn(w, e.weights[i]));
+      const pin = e.mirrorMask[i];
       const v = e.verts[i] * 3;
-      pos[v] = l[0];
-      pos[v + 1] = l[1];
-      pos[v + 2] = l[2];
+      pos[v] = pin & 1 ? 0 : l[0];
+      pos[v + 1] = pin & 2 ? 0 : l[1];
+      pos[v + 2] = pin & 4 ? 0 : l[2];
+    }
+    // Live symmetry: mirror images follow their driver.
+    for (let i = 0; i < e.verts.length; i++) {
+      const src = e.mirrorOf[i];
+      if (src < 0) continue;
+      const d = e.verts[src] * 3, v = e.verts[i] * 3, m = e.mirrorMask[i];
+      pos[v] = m & 1 ? -pos[d] : pos[d];
+      pos[v + 1] = m & 2 ? -pos[d + 1] : pos[d + 1];
+      pos[v + 2] = m & 4 ? -pos[d + 2] : pos[d + 2];
     }
     for (const m of e.obj.modifiers) if (m.type === 'MIRROR' && m.show_viewport) applyMirrorClip(m, e.verts, e.all, pos);
     e.obj.mesh.touchPositions();
@@ -374,6 +392,7 @@ export function makeEditTarget(
   selected: number[],
   proportional: number | null = null,
   original: ArrayLike<number> = obj.mesh.positions,
+  symmetry: Axes | null = null,
 ): EditTarget {
   const m = objectMatrix(obj);
   const all = Float64Array.from(original);
@@ -400,10 +419,35 @@ export function makeEditTarget(
       weights.push(3 * t * t - 2 * t * t * t);
     }
   }
+  let mirrorOf: number[] = list.map(() => -1);
+  let mirrorMask: number[] = list.map(() => 0);
+  const sym = symmetry && symmetry.some(Boolean) ? symmetry : null;
+  if (sym) {
+    const plan = planSymmetry(all, list, weights, new Set(selected), sym);
+    const index = new Map(plan.drivers.map((d, i) => [d, i]));
+    list.length = 0;
+    list.push(...plan.drivers, ...plan.mirrors.map((x) => x.v));
+    weights.length = 0;
+    weights.push(...plan.driverWeights, ...plan.mirrors.map(() => 0));
+    mirrorOf = [...plan.drivers.map(() => -1), ...plan.mirrors.map((x) => index.get(x.driver)!)];
+    mirrorMask = [...plan.pin, ...plan.mirrors.map((x) => x.mask)];
+  }
   const v = Int32Array.from(list);
   const start = new Float64Array(v.length * 3);
   v.forEach((vi, i) => start.set([all[vi * 3], all[vi * 3 + 1], all[vi * 3 + 2]], i * 3));
-  return { obj, verts: v, start, m, inv: invert(m), all, weights: Float32Array.from(weights), selected: [...selected] };
+  return {
+    obj,
+    verts: v,
+    start,
+    m,
+    inv: invert(m),
+    all,
+    weights: Float32Array.from(weights),
+    selected: [...selected],
+    symmetry: sym,
+    mirrorOf: Int32Array.from(mirrorOf),
+    mirrorMask: Uint8Array.from(mirrorMask),
+  };
 }
 
 const apply3 = (r: number[][], v: Vec3): Vec3 => [

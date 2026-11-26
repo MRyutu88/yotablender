@@ -30,6 +30,8 @@ interface ObjectV1 {
   mesh: { vertices: number[][]; faces: number[][]; loose_edges: Edge[] };
   modifiers: Modifier[];
   primitive?: SceneObject['primitive'];
+  /** Edit Mode live symmetry (Blender's mesh.use_mirror_x/y/z). */
+  use_mirror?: [boolean, boolean, boolean];
 }
 
 export interface ColorAttributeV2 {
@@ -157,6 +159,7 @@ export function serializeProject(p: Project, opts: SerializeOptions = {}): Proje
         scale: [...o.scale],
         visible: o.visible,
         shade_smooth: o.shade_smooth,
+        ...(o.use_mirror?.some(Boolean) ? { use_mirror: [...o.use_mirror] as [boolean, boolean, boolean] } : {}),
         materials: o.materialSlots.map((id) => nameOf(id)).filter((n): n is string => !!n),
         mesh: {
           vertices: verts,
@@ -216,6 +219,7 @@ export function deserializeProject(input: unknown, imageBytes?: (name: string) =
         scale: [...o.scale] as Vec3,
         visible: o.visible,
         shade_smooth: o.shade_smooth,
+        use_mirror: Array.isArray(o.use_mirror) && o.use_mirror.some(Boolean) ? ([0, 1, 2].map((i) => !!o.use_mirror![i]) as [boolean, boolean, boolean]) : undefined,
         materialSlots: slots,
         mesh: new Mesh({
           positions,

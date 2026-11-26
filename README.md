@@ -18,6 +18,11 @@ A touch-first low-poly character modeler for phones (an installable PWA) with a 
   "Character start" (half box with Mirror + Subdivision); move/rotate/scale, duplicate, outliner.
 - **Edit Mode** (vertex / edge / face): extrude, inset, loop cut, merge, delete; select
   linked / loop / ring (double-tap an edge for its loop); proportional editing.
+- **Symmetry** (Edit Mode → Symmetry): live symmetry per local X/Y/Z axis (moving a vertex moves
+  its mirror image; vertices on the plane stay on it), and **Symmetrize** to make a lopsided
+  mesh symmetric by copying one side onto the other (+X → −X or −X → +X, same for Y/Z; faces
+  crossing the plane are cut). Live symmetry is saved with the object and imported into
+  Blender as the mesh's X/Y/Z mirror options.
 - **Modifiers:** Mirror (axes, clipping, merge) → Subdivision Surface, matching Blender 5.3's results.
 - **Materials:** slots per object, per-face assignment, base color / roughness / metallic,
   Solid or Material preview shading.
